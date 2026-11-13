@@ -82,14 +82,22 @@ class FakeServices:
     def has_service(self, domain, name):
         return (domain, name) in self.handlers
 
+class FakeAuth:
+    def __init__(self, user_ids):
+        self.user_ids = user_ids
+    async def async_get_user(self, user_id):
+        return object() if user_id in self.user_ids else None
+
 class FakeHass:
     def __init__(self):
         self.data = {}
         self.services = FakeServices()
+        self.auth = FakeAuth({"a", "alice", "bob"})
 
 class FakeServiceCall:
-    def __init__(self, data):
+    def __init__(self, data, context=None):
         self.data = data
+        self.context = context
 
 def future():
     return datetime.now(timezone.utc) + timedelta(days=1)
@@ -176,6 +184,29 @@ def test_services():
         await raises(call('update', {'id': created['id'], 'date': '2025-01-01T12:00:00'}), 'date')
         await services.async_unregister_services(hass)
         assert not hass.services.handlers
+    asyncio.run(run())
+
+def test_services_user_context():
+    async def run():
+        hass = FakeHass()
+        manager = api.ReminderManager(FakeStore(), FakeScheduler())
+        await services.async_register_services(hass, manager)
+        async def call(name, data, context=None):
+            return await hass.services.handlers['voice_reminders', name](FakeServiceCall(data, context))
+        data = {'text': 'x', 'owner_user_id': 'bob', 'date': future().isoformat()}
+        alice = types.SimpleNamespace(user_id='alice')
+        ghost = types.SimpleNamespace(user_id='ghost')
+        created = await call('create', data, alice)
+        assert created['created_by_user_id'] == 'alice'
+        await raises(call('create', {**data, 'owner_user_id': 'ghost'}), 'does not exist')
+        await raises(call('create', data, ghost), 'does not exist')
+        await raises(call('list', {'owner_user_id': 'ghost'}), 'does not exist')
+        assert (await call('list', {'owner_user_id': 'bob'}))['reminders'] == [created]
+        assert (await call('list', {'owner_user_id': 'alice'}))['reminders'] == []
+        for name, fields in [('update', {'text': 'new'}), ('snooze', {'delay': 60}), ('cancel', {})]:
+            args = {'id': created['id'], **fields}
+            await raises(call(name, args, ghost), 'does not exist')
+            await call(name, args)
     asyncio.run(run())
 
 def test_setup_and_unload():

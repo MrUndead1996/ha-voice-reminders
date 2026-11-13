@@ -15,6 +15,19 @@ def _required(data: dict[str, Any], name: str) -> Any:
     return data[name]
 
 
+def _context_user_id(call):
+    return getattr(getattr(call, "context", None), "user_id", None)
+
+
+async def _require_user(hass, user_id, label):
+    if not isinstance(user_id, str) or not user_id.strip():
+        raise ValueError(f"{label} must be a non-blank string")
+    user = await hass.auth.async_get_user(user_id)
+    if user is None:
+        raise ValueError(f"{label} does not exist: {user_id}")
+    return user_id
+
+
 def _parse_date(value: Any) -> datetime:
     """Parse a timezone-aware ISO datetime."""
     if not isinstance(value, str):
@@ -35,13 +48,19 @@ async def async_register_services(hass: Any, manager: ReminderManager) -> None:
         data = call.data
         text = _required(data, "text")
         owner = _required(data, "owner_user_id")
+        await _require_user(hass, owner, "owner_user_id")
+        creator = _context_user_id(call) or data.get("created_by_user_id", owner)
+        await _require_user(hass, creator, "created_by_user_id")
         date = _parse_date(_required(data, "date"))
-        reminder = await manager.async_create(text, owner, data.get("created_by_user_id", owner),
+        reminder = await manager.async_create(text, owner, creator,
                                               date, data.get("recurrence", "none"))
         return reminder.to_dict()
 
     async def list_reminders(call: Any) -> dict[str, Any]:
         """List reminders matching the service filters."""
+        owner = call.data.get("owner_user_id")
+        if owner is not None:
+            await _require_user(hass, owner, "owner_user_id")
         items = await manager.async_list(call.data.get("owner_user_id"), call.data.get("status"))
         return {"reminders": [item.to_dict() for item in items]}
 
@@ -50,12 +69,18 @@ async def async_register_services(hass: Any, manager: ReminderManager) -> None:
         data = call.data
         reminder_id = _required(data, "id")
         date = _parse_date(data["date"]) if "date" in data else None
+        user_id = _context_user_id(call)
+        if user_id is not None:
+            await _require_user(hass, user_id, "context user")
         reminder = await manager.async_update(reminder_id, text=data.get("text"), date=date,
                                               recurrence=data.get("recurrence"), status=data.get("status"))
         return reminder.to_dict()
 
     async def cancel(call: Any) -> dict[str, Any]:
         """Cancel a reminder."""
+        user_id = _context_user_id(call)
+        if user_id is not None:
+            await _require_user(hass, user_id, "context user")
         return (await manager.async_cancel(_required(call.data, "id"))).to_dict()
 
     async def snooze(call: Any) -> dict[str, Any]:
@@ -63,6 +88,9 @@ async def async_register_services(hass: Any, manager: ReminderManager) -> None:
         data = call.data
         reminder_id = _required(data, "id")
         date = _parse_date(data["date"]) if "date" in data else None
+        user_id = _context_user_id(call)
+        if user_id is not None:
+            await _require_user(hass, user_id, "context user")
         return (await manager.async_snooze(reminder_id, delay_seconds=data.get("delay"), date=date)).to_dict()
 
     for name, handler in zip(_SERVICES, (create, list_reminders, update, cancel, snooze)):
