@@ -1,0 +1,114 @@
+create:
+  name: Создать напоминание
+  description: Создать напоминание для получателя.
+  fields:
+    text:
+      name: Текст
+      required: true
+      selector:
+        text:
+    date:
+      name: Дата и время
+      description: ISO 8601 с часовым поясом; дата должна быть в будущем.
+      required: true
+      selector:
+        text:
+    owner_user_id:
+      name: ID получателя
+      description: Укажите owner_user_id или owner.
+      selector:
+        text:
+    owner:
+      name: Имя получателя
+      description: ID, имя, полное имя или username; вместо owner_user_id.
+      selector:
+        text:
+    created_by_user_id:
+      name: ID создателя
+      description: Используется только при вызове без контекста пользователя.
+      selector:
+        text:
+    recurrence:
+      name: Повторение
+      description: none, daily, weekly или monthly.
+      selector:
+        text:
+list:
+  name: Список напоминаний
+  description: Вернуть напоминания по фильтрам.
+  fields:
+    owner_user_id:
+      name: ID получателя
+      selector:
+        text:
+    owner:
+      name: Имя получателя
+      description: Вместо owner_user_id.
+      selector:
+        text:
+    view:
+      name: Представление
+      description: mine или created; вместо фильтра получателя, требуется контекст пользователя.
+      selector:
+        text:
+    status:
+      name: Статус
+      description: pending, fired, done или cancelled.
+      selector:
+        text:
+update:
+  name: Изменить напоминание
+  description: Изменить одно или несколько полей напоминания.
+  fields:
+    id:
+      name: ID напоминания
+      required: true
+      selector:
+        text:
+    text:
+      name: Текст
+      selector:
+        text:
+    date:
+      name: Дата и время
+      description: ISO 8601 с часовым поясом и в будущем.
+      selector:
+        text:
+    recurrence:
+      name: Повторение
+      description: none, daily, weekly или monthly.
+      selector:
+        text:
+    status:
+      name: Статус
+      description: pending, fired, done или cancelled.
+      selector:
+        text:
+cancel:
+  name: Отменить напоминание
+  fields:
+    id:
+      name: ID напоминания
+      required: true
+      selector:
+        text:
+snooze:
+  name: Отложить напоминание
+  description: Перенести ожидающее напоминание по задержке или на указанную дату.
+  fields:
+    id:
+      name: ID напоминания
+      required: true
+      selector:
+        text:
+    delay:
+      name: Задержка
+      description: Положительное число секунд от текущей даты напоминания; вместо date.
+      selector:
+        number:
+          mode: box
+    date:
+      name: Новая дата и время
+      description: ISO 8601 с часовым поясом и в будущем; вместо delay.
+      selector:
+        text:

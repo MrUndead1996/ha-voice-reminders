@@ -19,12 +19,23 @@
       "init": {
         "title": "Reminder settings",
         "data": {
-          "interval_minutes": "Interval (minutes)"
+          "interval_minutes": "Interval (minutes)",
+          "satellites": "Satellite entity ids (comma-separated) or \"all\"",
+          "preannounce": "Pre-announce phrase",
+          "notify_targets": "User notification services",
+          "snooze_intervals": "Snooze button intervals (minutes)"
+        },
+        "data_description": {
+          "notify_targets": "Comma-separated user ID:notify service pairs, for example ab12cd34:mobile_app_anna.",
+          "snooze_intervals": "Comma-separated intervals in minutes, e.g. 10, 60, 1440. Empty disables snooze buttons."
         }
       }
     },
     "error": {
-      "invalid_interval": "Enter an interval between 1 and 1440 minutes."
+      "invalid_interval": "Enter an interval between 1 and 1440 minutes.",
+      "invalid_satellites": "Invalid satellite list",
+      "invalid_notify_targets": "Invalid notification targets",
+      "invalid_snooze_intervals": "Enter up to five positive intervals in minutes."
     }
   }
 }
