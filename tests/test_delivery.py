@@ -53,6 +53,7 @@ def test_resolve_satellites():
     expected = ["assist_satellite.a", "assist_satellite.z"]
     for setting in ("all", "", "  ", None):
         assert delivery.resolve_satellites(hass, setting) == expected
+    assert delivery.resolve_satellites(hass, "none") == []
     assert delivery.resolve_satellites(hass, " x.y, assist_satellite.a, x.y,, ") == [
         "x.y", "assist_satellite.a"]
     for value in ("bad id", "no_dot", "UPPER.x"):

@@ -27,7 +27,7 @@ def resolve_satellites(hass: Any, setting: str | None) -> list[str]:
 
     Args:
         hass: Home Assistant instance with an entity registry.
-        setting: Comma-separated entity IDs, or all.
+        setting: Comma-separated entity IDs, all, or none.
 
     Returns:
         Entity IDs in configured order, or sorted registry order for all.
@@ -36,6 +36,8 @@ def resolve_satellites(hass: Any, setting: str | None) -> list[str]:
         ValueError: If an entity ID is invalid.
     """
     setting = (setting or "").strip() or "all"
+    if setting == "none":
+        return []
     if setting == "all":
         registry = hass.entity_registry
         return sorted(entity_id for entity_id in (registry.entities if registry else {})

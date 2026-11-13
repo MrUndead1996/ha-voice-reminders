@@ -18,15 +18,20 @@
       "init": {
         "title": "Reminder settings",
         "data": {
-          "satellites": "Satellite entity ids (comma-separated) or \"all\"",
+          "all_satellites": "Use all satellites",
+          "satellites": "Satellites",
           "preannounce": "Pre-announce phrase",
-          "notify_targets": "User notification services",
           "snooze_intervals": "Snooze button intervals (minutes)"
         },
         "data_description": {
-          "notify_targets": "Comma-separated user ID:notify service pairs, for example ab12cd34:mobile_app_anna.",
+          "satellites": "Select satellites when 'Use all satellites' is off. An empty selection disables announcements.",
           "snooze_intervals": "Comma-separated intervals in minutes, e.g. 10, 60, 1440. Empty disables snooze buttons."
         }
+      },
+      "notification": {
+        "title": "User notifications",
+        "description": "Choose a notification service for {user}. Select None to disable notifications.",
+        "data": {"notify_target": "Notification service"}
       }
     },
     "error": {
