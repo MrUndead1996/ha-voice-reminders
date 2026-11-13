@@ -12,24 +12,6 @@ from .delivery import (CONF_NOTIFY_TARGETS, CONF_PREANNOUNCE, CONF_SATELLITES, C
 
 DOMAIN = "voice_reminders"
 CONF_NAME = "name"
-CONF_INTERVAL = "interval_minutes"
-DEFAULT_INTERVAL = 30
-
-
-def _schema(interval: int, *, include_name: bool = False) -> vol.Schema:
-    """Build a form schema for the requested flow."""
-    fields: dict = {}
-    if include_name:
-        fields[vol.Required(CONF_NAME, default="Voice Reminders")] = str
-    fields[vol.Required(CONF_INTERVAL, default=interval)] = int
-    return vol.Schema(fields)
-
-
-def _interval_errors(user_input: dict[str, Any]) -> dict[str, str]:
-    """Validate the reminder interval."""
-    if not 1 <= user_input[CONF_INTERVAL] <= 1440:
-        return {CONF_INTERVAL: "invalid_interval"}
-    return {}
 
 
 class VoiceRemindersConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -44,13 +26,10 @@ class VoiceRemindersConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle the initial setup form."""
-        errors = {}
         if user_input is not None:
-            errors = _interval_errors(user_input)
-            if not errors:
-                return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
+            return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
         return self.async_show_form(
-            step_id="user", data_schema=_schema(DEFAULT_INTERVAL, include_name=True), errors=errors
+            step_id="user", data_schema=vol.Schema({vol.Required(CONF_NAME, default="Voice Reminders"): str})
         )
 
 
@@ -58,10 +37,9 @@ class VoiceRemindersOptionsFlow(config_entries.OptionsFlow):
     """Handle options for Voice Reminders."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Manage the reminder interval."""
+        """Manage delivery settings."""
         errors = {}
         if user_input is not None:
-            errors = _interval_errors(user_input)
             satellites = user_input.get(CONF_SATELLITES, "all").strip()
             if satellites and satellites != "all" and any(
                 not _ENTITY_ID_RE.fullmatch(part.strip())
@@ -77,10 +55,7 @@ class VoiceRemindersOptionsFlow(config_entries.OptionsFlow):
             except ValueError:
                 errors[CONF_SNOOZE_INTERVALS] = "invalid_snooze_intervals"
             if not errors:
-                return self.async_create_entry(title="", data=user_input)
-        interval = self.config_entry.options.get(
-            CONF_INTERVAL, self.config_entry.data.get(CONF_INTERVAL, DEFAULT_INTERVAL)
-        )
+                return self.async_create_entry(title="", data={**self.config_entry.options, **user_input})
         satellites = self.config_entry.options.get(
             CONF_SATELLITES, self.config_entry.data.get(CONF_SATELLITES, "all")
         )
@@ -94,7 +69,6 @@ class VoiceRemindersOptionsFlow(config_entries.OptionsFlow):
             CONF_SNOOZE_INTERVALS, self.config_entry.data.get(CONF_SNOOZE_INTERVALS, "")
         )
         schema = vol.Schema({
-            vol.Required(CONF_INTERVAL, default=interval): int,
             vol.Optional(CONF_SATELLITES, default=satellites): str,
             vol.Optional(CONF_PREANNOUNCE, default=preannounce): str,
             vol.Optional(CONF_NOTIFY_TARGETS, default=notify_targets): str,

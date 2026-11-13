@@ -3,15 +3,14 @@
     "step": {
       "user": {
         "title": "Voice Reminders",
-        "description": "Configure the reminder settings.",
+        "description": "Choose how this integration will be named in Home Assistant. Satellites and notifications can be configured after adding the integration.",
         "data": {
-          "name": "Name",
-          "interval_minutes": "Interval (minutes)"
+          "name": "Integration name"
+        },
+        "data_description": {
+          "name": "Shown in the Home Assistant devices and services list."
         }
       }
-    },
-    "error": {
-      "invalid_interval": "Enter an interval between 1 and 1440 minutes."
     }
   },
   "options": {
@@ -19,7 +18,6 @@
       "init": {
         "title": "Reminder settings",
         "data": {
-          "interval_minutes": "Interval (minutes)",
           "satellites": "Satellite entity ids (comma-separated) or \"all\"",
           "preannounce": "Pre-announce phrase",
           "notify_targets": "User notification services",
@@ -32,7 +30,6 @@
       }
     },
     "error": {
-      "invalid_interval": "Enter an interval between 1 and 1440 minutes.",
       "invalid_satellites": "Invalid satellite list",
       "invalid_notify_targets": "Invalid notification targets",
       "invalid_snooze_intervals": "Enter up to five positive intervals in minutes."
