@@ -21,9 +21,12 @@ class IntentResponseType(Enum):
 class IntentResponse:
     def __init__(self):
         self.speech = {}
+        self.reprompt = {}
         self.response_type = IntentResponseType.ACTION_DONE
     def async_set_speech(self, text):
         self.speech = {'plain': {'speech': text}}
+    def async_set_reprompt(self, text):
+        self.reprompt = {'plain': {'reprompt': text}}
     def async_set_card(self, title, content):
         self.card = (title, content)
 class Intent:
@@ -78,6 +81,7 @@ class FakeHass:
 def future(): return datetime.now(timezone.utc) + timedelta(days=1)
 def slots(**kwargs): return {key: {'value': value} for key, value in kwargs.items()}
 def speech(response): return response.speech['plain']['speech']
+def reprompt(response): return response.reprompt['plain']['reprompt']
 async def raises(awaitable, message=None):
     try: await awaitable
     except IntentHandleError as err:
@@ -144,7 +148,9 @@ def test_cancel():
         await call('CancelReminder', 'alice', id=item.id)
         assert item.status == 'cancelled'
         await raises(call('CancelReminder', 'bob', text='missing'), 'reminder not found')
-        await raises(call('CancelReminder', 'bob'), 'provide either id or text')
+        response = await call('CancelReminder', 'bob')
+        assert speech(response) == 'Which reminder should I cancel?'
+        assert reprompt(response) == 'Say the reminder name or id.'
         await manager.async_create('duplicate', 'bob', 'bob', future())
         await manager.async_create('duplicate', 'bob', 'bob', future())
         await raises(call('CancelReminder', 'bob', text='duplicate'), 'reminder is ambiguous')
@@ -159,7 +165,9 @@ def test_snooze():
         assert (await manager.async_list())[0].date == original + timedelta(seconds=30)
         await call('SnoozeReminder', 'bob', text='TASK', delay='10 minutes')
         assert (await manager.async_list())[0].date == original + timedelta(seconds=630)
-        await raises(call('SnoozeReminder', 'bob', id=item.id), 'delay')
+        response = await call('SnoozeReminder', 'bob', id=item.id)
+        assert speech(response) == 'How long should I snooze the reminder?'
+        assert reprompt(response) == 'Give a duration, e.g. 10 minutes.'
         await raises(call('SnoozeReminder', 'bob', id='unknown', delay=1), 'reminder not found')
         await raises(call('SnoozeReminder', 'charlie', id=item.id, delay=1), 'only the recipient')
         for delay in (True, 0, 'bogus', '1 day'):
@@ -224,4 +232,42 @@ def test_english_slots():
         original = item.date
         await call('SnoozeReminder', 'bob', id=item.id, delay='in twenty minutes')
         assert (await manager.async_list())[0].date == original + timedelta(minutes=20)
+    asyncio.run(run())
+
+
+def test_localized_responses():
+    async def run():
+        hass, manager, call = await setup()
+        now = datetime(2026, 11, 13, 10, tzinfo=timezone.utc)
+        class FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now.astimezone(tz) if tz else now.replace(tzinfo=None)
+        async def create(text, owner, user, date, recurrence):
+            return types.SimpleNamespace(text=text, owner_user_id=owner, date=date, recurrence=recurrence)
+        with patch.object(intents, 'datetime', FixedDatetime), patch.object(manager, 'async_create', create):
+            response = speech(await call('CreateReminder', 'bob', language='ru', text='полить цветы', date='завтра в 15:00', recurrence='каждую неделю'))
+            assert response.startswith('Напоминание создано:') and 'полить цветы' in response
+            assert '2026-11-14 15:00' in response and 'повторяется каждую неделю' in response
+            response = speech(await call('CreateReminder', 'bob', language='ru', text='цветы', date='завтра в 15:00', owner='Ане'))
+            assert response.startswith('Напоминание для Аня:')
+            response = speech(await call('CreateReminder', 'bob', text='plants', date='tomorrow at 15:00'))
+            assert ' at 2026-11-14 15:00' in response
+            await raises(call('CreateReminder', 'bob', language='ru', text='x', date='bad'), 'Некорректная дата')
+        item = await manager.async_create('задача', 'bob', 'bob', future())
+        response = speech(await call('SnoozeReminder', 'bob', language='ru', id=item.id, delay=60))
+        assert 'Напоминание перенесено на' in response and 'задача' in response
+        assert intents._format_date(hass, (await manager.async_list())[0].date) in response
+        assert speech(await call('CancelReminder', 'bob', language='ru', id=item.id)) == 'Напоминание отменено: задача'
+        await raises(call('CancelReminder', 'bob', language='ru', text='missing'), 'Напоминание не найдено')
+        await raises(call('SnoozeReminder', 'bob', language='ru', id=item.id, delay='bogus'), 'Некорректная задержка')
+        await manager.async_create('дубликат', 'bob', 'bob', future())
+        await manager.async_create('дубликат', 'bob', 'bob', future())
+        await raises(call('CancelReminder', 'bob', language='ru', text='дубликат'), 'Неоднозначное')
+        response = await call('CancelReminder', 'bob', language='ru')
+        assert speech(response) == 'Какое напоминание отменить?'
+        assert reprompt(response) == 'Назовите напоминание или его идентификатор.'
+        response = await call('SnoozeReminder', 'bob', language='ru', id=item.id)
+        assert speech(response) == 'На сколько отложить напоминание?'
+        assert reprompt(response) == 'Укажите задержку, например 10 минут.'
     asyncio.run(run())
