@@ -27,11 +27,6 @@
           "satellites": "Select satellites when 'Use all satellites' is off. An empty selection disables announcements.",
           "snooze_intervals": "Comma-separated intervals in minutes, e.g. 10, 60, 1440. Empty disables snooze buttons."
         }
-      },
-      "notification": {
-        "title": "User notifications",
-        "description": "Choose a notification service for {user}. Select None to disable notifications.",
-        "data": {"notify_target": "Notification service"}
       }
     },
     "error": {

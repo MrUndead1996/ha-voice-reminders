@@ -40,29 +40,42 @@ class VoiceRemindersOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Manage delivery settings."""
         errors = {}
+        users = [user for user in await self.hass.auth.async_get_users()
+                 if not user.system_generated]
+        names = [user.name for user in users]
+        fields = {
+            user.id: f"🔔 {user.name}" + (f" ({user.id})" if names.count(user.name) > 1 else "")
+            for user in users
+        }
+        setting = self.config_entry.options.get(
+            CONF_NOTIFY_TARGETS, self.config_entry.data.get(CONF_NOTIFY_TARGETS, "")
+        )
+        try:
+            targets = resolve_notify_targets(setting)
+        except ValueError:
+            targets = {}
         if user_input is not None:
             try:
                 parse_snooze_intervals(user_input.get(CONF_SNOOZE_INTERVALS, ""))
             except ValueError:
                 errors[CONF_SNOOZE_INTERVALS] = "invalid_snooze_intervals"
             if not errors:
-                self._options = {**self.config_entry.options, **user_input}
-                self._options.pop("all_satellites", None)
+                options = {**self.config_entry.options, **user_input}
+                options.pop("all_satellites", None)
                 selected = user_input.get(CONF_SATELLITES, [])
-                self._options[CONF_SATELLITES] = (
+                options[CONF_SATELLITES] = (
                     "all" if user_input.get("all_satellites") else ",".join(selected) or "none"
                 )
-                setting = self.config_entry.options.get(
-                    CONF_NOTIFY_TARGETS, self.config_entry.data.get(CONF_NOTIFY_TARGETS, "")
+                for user in users:
+                    target = options.pop(fields[user.id], "__none__")
+                    if target == "__none__":
+                        targets.pop(user.id, None)
+                    else:
+                        targets[user.id] = target
+                options[CONF_NOTIFY_TARGETS] = ",".join(
+                    f"{user_id}:{service}" for user_id, service in targets.items()
                 )
-                try:
-                    self._targets = resolve_notify_targets(setting)
-                except ValueError:
-                    self._targets = {}
-                self._users = [user for user in await self.hass.auth.async_get_users()
-                               if not user.system_generated]
-                self._user_index = 0
-                return await self.async_step_notification()
+                return self.async_create_entry(title="", data=options)
         satellites = self.config_entry.options.get(
             CONF_SATELLITES, self.config_entry.data.get(CONF_SATELLITES, "all")
         ) or "all"
@@ -82,46 +95,22 @@ class VoiceRemindersOptionsFlow(config_entries.OptionsFlow):
         snooze_intervals = self.config_entry.options.get(
             CONF_SNOOZE_INTERVALS, self.config_entry.data.get(CONF_SNOOZE_INTERVALS, "")
         )
-        schema = vol.Schema({
+        schema = {
             vol.Optional("all_satellites", default=satellites == "all"): bool,
             vol.Optional(CONF_SATELLITES, default=selected): SelectSelector(
                 SelectSelectorConfig(options=choices, multiple=True, mode="list")
             ),
             vol.Optional(CONF_PREANNOUNCE, default=preannounce): str,
             vol.Optional(CONF_SNOOZE_INTERVALS, default=snooze_intervals): str,
-        })
-        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
-
-    async def async_step_notification(self, user_input: dict[str, Any] | None = None) -> FlowResult:
-        """Choose a notification service for each Home Assistant user."""
-        if user_input is not None:
-            user = self._users[self._user_index]
-            target = user_input["notify_target"]
-            if target == "__none__":
-                self._targets.pop(user.id, None)
-            else:
-                self._targets[user.id] = target
-            self._user_index += 1
-
-        if self._user_index == len(self._users):
-            self._options[CONF_NOTIFY_TARGETS] = ",".join(
-                f"{user_id}:{service}" for user_id, service in self._targets.items()
-            )
-            return self.async_create_entry(title="", data=self._options)
-
-        user = self._users[self._user_index]
+        }
         services = set(self.hass.services.async_services().get("notify", {}))
-        current = self._targets.get(user.id)
-        if current:
-            services.add(current)
-        choices = [{"value": "__none__", "label": "None"}] + [
-            {"value": service, "label": f"notify.{service}"} for service in sorted(services)
-        ]
-        return self.async_show_form(
-            step_id="notification",
-            description_placeholders={"user": user.name},
-            data_schema=vol.Schema({
-                vol.Required("notify_target", default=current or "__none__"):
-                    SelectSelector(SelectSelectorConfig(options=choices)),
-            }),
-        )
+        for user in users:
+            current = targets.get(user.id)
+            available = services | ({current} if current else set())
+            choices = [{"value": "__none__", "label": "None"}] + [
+                {"value": service, "label": f"notify.{service}"} for service in sorted(available)
+            ]
+            schema[vol.Required(fields[user.id], default=current or "__none__")] = (
+                SelectSelector(SelectSelectorConfig(options=choices))
+            )
+        return self.async_show_form(step_id="init", data_schema=vol.Schema(schema), errors=errors)
