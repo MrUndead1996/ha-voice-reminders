@@ -1,5 +1,6 @@
 """Deliver reminders through Assist satellites."""
 
+import asyncio
 import json
 import logging
 import re
@@ -207,8 +208,8 @@ def async_delivery_hook(hass: Any, settings: dict) -> Callable[[Any], Awaitable[
     Returns:
         An asynchronous reminder callback.
     """
-    async def deliver(reminder: Any) -> None:
-        """Deliver one reminder without disrupting the scheduler."""
+    async def _deliver_tts(reminder: Any) -> None:
+        """Deliver through satellites independently of notifications."""
         try:
             satellites = resolve_satellites(hass, settings[CONF_SATELLITES])
         except ValueError as err:
@@ -220,6 +221,9 @@ def async_delivery_hook(hass: Any, settings: dict) -> Callable[[Any], Awaitable[
                 await async_announce(hass, reminder, satellites, settings.get(CONF_PREANNOUNCE, ""))
             except Exception:
                 _LOGGER.exception("Failed to announce reminder")
+
+    async def _deliver_push(reminder: Any) -> None:
+        """Deliver notifications independently of satellite announcements."""
         try:
             targets = resolve_notify_targets(settings.get(CONF_NOTIFY_TARGETS, ""))
             try:
@@ -230,7 +234,7 @@ def async_delivery_hook(hass: Any, settings: dict) -> Callable[[Any], Awaitable[
         except ValueError as err:
             _LOGGER.warning("Invalid notify target settings: %s", err)
         except Exception:
-            _LOGGER.exception("Failed to resolve notify targets")
+            _LOGGER.exception("Failed to notify reminder owner")
         else:
             try:
                 service = targets.get(reminder.owner_user_id)
@@ -238,5 +242,9 @@ def async_delivery_hook(hass: Any, settings: dict) -> Callable[[Any], Awaitable[
                     await async_notify(hass, reminder, service, snooze_minutes)
             except Exception:
                 _LOGGER.exception("Failed to notify reminder owner")
+
+    async def deliver(reminder: Any) -> None:
+        """Deliver one reminder without disrupting the scheduler."""
+        await asyncio.gather(_deliver_tts(reminder), _deliver_push(reminder))
 
     return deliver

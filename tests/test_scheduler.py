@@ -265,3 +265,30 @@ def test_restart_without_on_fire_hook():
         assert saved[1].status == "pending" and saved[1].date > now
         assert len(schedules) == 1 and schedules[0]["when"] == saved[1].date
     asyncio.run(run())
+
+
+def test_delivery_failure_does_not_redeliver():
+    async def run():
+        import logging
+        import unittest
+        now = datetime.now(timezone.utc)
+        for recurrence in ("none", "daily"):
+            store = setup()
+            item = reminder(now - timedelta(seconds=1), recurrence)
+            await store.async_save([item])
+            fired = []
+            async def on_fire(value):
+                fired.append(value.id)
+                raise RuntimeError("delivery failed")
+            scheduler = scheduler_module.ReminderScheduler(None, store, on_fire)
+            with unittest.TestCase().assertLogs(scheduler_module.__name__, level=logging.ERROR) as logs:
+                await scheduler._async_process_due(now)
+            assert f"Failed to deliver reminder {item.id}" in logs.output[0]
+            saved = (await store.async_load())[0]
+            assert saved.status == ("fired" if recurrence == "none" else "pending")
+            if recurrence == "daily":
+                assert saved.date > now
+            assert fired == [item.id]
+            await scheduler._async_process_due(now)
+            assert fired == [item.id]
+    asyncio.run(run())

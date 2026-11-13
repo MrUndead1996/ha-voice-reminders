@@ -1,11 +1,14 @@
 """Schedule reminder delivery using one-shot Home Assistant callbacks."""
 
 import calendar
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 
 from .models import Reminder
 from .storage import ReminderStore
+
+_LOGGER = logging.getLogger(__name__)
 
 __all__ = ["next_occurrence", "ReminderScheduler"]
 
@@ -80,7 +83,10 @@ class ReminderScheduler:
             if reminder.status != "pending" or reminder.date > now:
                 continue
             if self._on_fire is not None:
-                await self._on_fire(reminder)
+                try:
+                    await self._on_fire(reminder)
+                except Exception:
+                    _LOGGER.exception("Failed to deliver reminder %s", reminder.id)
             if reminder.recurrence == "none":
                 await self._store.async_update_status(reminder.id, "fired")
                 reminder.set_status("fired")

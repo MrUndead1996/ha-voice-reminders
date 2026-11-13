@@ -275,3 +275,35 @@ def test_delivery_hook_snooze_buttons():
         await hook(reminder)
         assert len(hass.services.calls) == 2
     asyncio.run(run())
+
+
+def test_channels_independent_on_runtime_errors():
+    async def run():
+        import unittest
+        reminder = types.SimpleNamespace(id="id", text="Due", owner_user_id="owner")
+        settings = {"satellites": "assist_satellite.a", "notify_targets": "owner:phone"}
+        for failing in ({"tts"}, {"notify"}, {"tts", "notify"}):
+            hass = make_hass()
+            attempts = []
+            async def call(domain, service, payload, context=None):
+                attempts.append((domain, service))
+                if domain in failing:
+                    raise RuntimeError("failed")
+            hass.services.async_call = call
+            with unittest.TestCase().assertLogs(delivery.__name__, level=logging.ERROR):
+                await delivery.async_delivery_hook(hass, settings)(reminder)
+            assert attempts == [("tts", "speak"), ("notify", "phone")]
+
+        # Both channels must start even if one is suspended in its service call.
+        hass = make_hass()
+        started = []
+        both_started = asyncio.Event()
+        async def wait_for_other(domain, service, payload, context=None):
+            started.append(domain)
+            if len(started) == 2:
+                both_started.set()
+            await both_started.wait()
+        hass.services.async_call = wait_for_other
+        await asyncio.wait_for(delivery.async_delivery_hook(hass, settings)(reminder), timeout=0.5)
+        assert started == ["tts", "notify"]
+    asyncio.run(run())
