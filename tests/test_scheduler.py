@@ -171,3 +171,97 @@ def test_next_occurrence():
         pass
     else:
         assert False, "expected ValueError"
+
+
+def test_restart_fires_missed_once_and_marks_fired():
+    async def run():
+        store = setup()
+        item = reminder(future(-1))
+        await store.async_save([item])
+        fired = []
+        async def on_fire(value):
+            fired.append(value.id)
+        await scheduler_module.ReminderScheduler(None, store, on_fire).async_start()
+        assert fired == [item.id]
+        assert (await store.async_load())[0].status == "fired"
+        assert not schedules
+    asyncio.run(run())
+
+
+def test_restart_recurring_advances_past_now():
+    async def run():
+        store = setup()
+        now = datetime(2025, 2, 1, 12, tzinfo=timezone.utc)
+        class FrozenDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now
+        original = scheduler_module.datetime
+        scheduler_module.datetime = FrozenDatetime
+        try:
+            daily = reminder(now - timedelta(days=3), "daily")
+            monthly = reminder(datetime(2025, 1, 31, 12, tzinfo=timezone.utc), "monthly")
+            await store.async_save([daily, monthly])
+            fired = []
+            async def on_fire(value):
+                fired.append(value.id)
+            await scheduler_module.ReminderScheduler(None, store, on_fire).async_start()
+            saved = await store.async_load()
+            assert fired == [daily.id, monthly.id]
+            assert all(item.status == "pending" and item.date > now for item in saved)
+            assert saved[1].date == datetime(2025, 2, 28, 12, tzinfo=timezone.utc)
+            assert len(schedules) == 1 and schedules[0]["when"] == saved[0].date
+        finally:
+            scheduler_module.datetime = original
+    asyncio.run(run())
+
+
+def test_restart_restores_future_and_ignores_non_pending():
+    async def run():
+        store = setup()
+        past, early, late = reminder(future(-1)), reminder(future()), reminder(future(2))
+        ignored = [reminder(future(-1)) for _ in range(3)]
+        for item, status in zip(ignored, ("done", "fired", "cancelled")):
+            item.set_status(status)
+        await store.async_save([past, late, *ignored, early])
+        fired = []
+        async def on_fire(value):
+            fired.append(value.id)
+        await scheduler_module.ReminderScheduler(None, store, on_fire).async_start()
+        assert fired == [past.id]
+        assert len(schedules) == 1 and schedules[0]["when"] == early.date
+        assert [item.status for item in (await store.async_load())[2:5]] == ["done", "fired", "cancelled"]
+    asyncio.run(run())
+
+
+def test_fire_callback_catchup_skips_elapsed_periods():
+    async def run():
+        store = setup()
+        item = reminder(future(), "daily")
+        await store.async_save([item])
+        fired = []
+        async def on_fire(value):
+            fired.append(value.id)
+        scheduler = scheduler_module.ReminderScheduler(None, store, on_fire)
+        await scheduler.async_start()
+        now = item.date + timedelta(days=5)
+        await schedules[-1]["action"](now)
+        saved = (await store.async_load())[0]
+        assert fired == [item.id]
+        assert saved.status == "pending" and saved.date == now + timedelta(days=1)
+        assert schedules[-1]["when"] == saved.date
+    asyncio.run(run())
+
+
+def test_restart_without_on_fire_hook():
+    async def run():
+        store = setup()
+        now = datetime.now(timezone.utc)
+        once, recurring = reminder(now - timedelta(days=1)), reminder(now - timedelta(days=3), "daily")
+        await store.async_save([once, recurring])
+        await scheduler_module.ReminderScheduler(None, store).async_start()
+        saved = await store.async_load()
+        assert saved[0].status == "fired"
+        assert saved[1].status == "pending" and saved[1].date > now
+        assert len(schedules) == 1 and schedules[0]["when"] == saved[1].date
+    asyncio.run(run())

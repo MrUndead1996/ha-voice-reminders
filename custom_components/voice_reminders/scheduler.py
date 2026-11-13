@@ -41,7 +41,8 @@ class ReminderScheduler:
         self._cancel: Callable[[], None] | None = None
 
     async def async_start(self) -> None:
-        """Schedule future reminders from storage, leaving past reminders untouched."""
+        """Process missed reminders and schedule the next future reminder."""
+        await self._async_process_due(datetime.now(timezone.utc))
         await self.async_reschedule()
 
     async def async_reschedule(self) -> None:
@@ -68,6 +69,11 @@ class ReminderScheduler:
 
     async def _async_fire(self, now: datetime) -> None:
         """Deliver due reminders, persist their next state, and reschedule."""
+        await self._async_process_due(now)
+        await self.async_reschedule()
+
+    async def _async_process_due(self, now: datetime) -> None:
+        """Deliver each due reminder once and persist its next state."""
         reminders = await self._store.async_load()
         recurring_changed = False
         for reminder in reminders:
@@ -79,11 +85,11 @@ class ReminderScheduler:
                 await self._store.async_update_status(reminder.id, "fired")
                 reminder.set_status("fired")
             else:
-                reminder.date = next_occurrence(reminder.date, reminder.recurrence)
+                while reminder.date <= now:
+                    reminder.date = next_occurrence(reminder.date, reminder.recurrence)
                 recurring_changed = True
         if recurring_changed:
             await self._store.async_save(reminders)
-        await self.async_reschedule()
 
     async def async_reminder_added(self, reminder: Reminder) -> None:
         """Reschedule after a reminder has been added to storage."""
