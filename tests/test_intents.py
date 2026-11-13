@@ -6,6 +6,8 @@ import types
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
+from zoneinfo import ZoneInfo
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 ha = types.ModuleType('homeassistant')
@@ -66,10 +68,13 @@ class FakeScheduler:
 class FakeAuth:
     def __init__(self):
         self.users = {name: types.SimpleNamespace(id=name, name=name, username=None, last_name=None) for name in ('alice', 'bob', 'charlie')}
+        self.users.update({key: types.SimpleNamespace(id=key, name=name, username=None, last_name=None) for key, name in [('anya', 'Аня'), ('sasha', 'Саша')]})
     async def async_get_user(self, user_id): return self.users.get(user_id)
     async def async_get_users(self): return list(self.users.values())
 class FakeHass:
-    def __init__(self): self.data, self.auth = {}, FakeAuth()
+    def __init__(self):
+        self.data, self.auth = {}, FakeAuth()
+        self.config = types.SimpleNamespace(time_zone='Europe/Moscow')
 def future(): return datetime.now(timezone.utc) + timedelta(days=1)
 def slots(**kwargs): return {key: {'value': value} for key, value in kwargs.items()}
 def speech(response): return response.speech['plain']['speech']
@@ -161,4 +166,38 @@ def test_snooze():
             await raises(call('SnoozeReminder', 'bob', id=item.id, delay=delay), 'invalid delay')
         await manager.async_cancel(item.id)
         await raises(call('SnoozeReminder', 'bob', id=item.id, delay=1), 'pending')
+    asyncio.run(run())
+
+
+def test_russian_slots():
+    async def run():
+        _, manager, call = await setup()
+        now = datetime(2026, 11, 13, 10, tzinfo=timezone.utc)
+        class FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now.astimezone(tz) if tz else now.replace(tzinfo=None)
+        with patch.object(intents, 'datetime', FixedDatetime):
+            # The manager also validates against its own clock; use a future clock
+            # for the integration and separately check the fixed calendar example.
+            from custom_components.voice_reminders import grammar
+            expected = grammar.parse_datetime('завтра в 15:00', now, ZoneInfo('Europe/Moscow'))
+            assert expected == datetime(2026, 11, 14, 12, tzinfo=timezone.utc)
+            # Capture manager creation so this fixed-clock test is independent of today's date.
+            captured = []
+            async def create(text, owner, user, date, recurrence):
+                item = types.SimpleNamespace(text=text, owner_user_id=owner, date=date, recurrence=recurrence)
+                captured.append(item)
+                return item
+            with patch.object(manager, 'async_create', create):
+                await call('CreateReminder', 'bob', text='полить цветы', date='завтра в 15:00', recurrence='каждую неделю', owner='Ане')
+                assert (captured[-1].owner_user_id, captured[-1].recurrence, captured[-1].date) == ('anya', 'weekly', expected)
+                await call('CreateReminder', 'bob', text='x', date='через 2 часа', owner='Сашу')
+                assert captured[-1].owner_user_id == 'sasha' and captured[-1].date == now + timedelta(hours=2)
+                await raises(call('CreateReminder', 'bob', text='x', date='через 2 часа', owner='Василия'), 'does not exist')
+                await raises(call('CreateReminder', 'bob', text='x', date='когда-нибудь'), 'invalid date')
+        item = await manager.async_create('task', 'bob', 'bob', future())
+        original = item.date
+        await call('SnoozeReminder', 'bob', id=item.id, delay='через двадцать минут')
+        assert (await manager.async_list())[0].date == original + timedelta(seconds=1200)
     asyncio.run(run())

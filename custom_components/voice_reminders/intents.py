@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from homeassistant.helpers import intent
 
+from . import grammar
 from .api import DOMAIN
 from .models import STATUSES
 from .services import _parse_date, _resolve_recipient
@@ -26,9 +27,17 @@ def _user(obj):
     return getattr(obj.context, 'user_id', None)
 
 
-def _date(value):
+def _date(value, hass):
     try:
-        date = _parse_date(value)
+        try:
+            date = _parse_date(value)
+        except ValueError:
+            if not isinstance(value, str):
+                raise
+            zone = getattr(getattr(hass, 'config', None), 'time_zone', None)
+            date = grammar.parse_datetime(value.strip(), datetime.now(timezone.utc), ZoneInfo(zone) if zone else None)
+            if date is None:
+                raise ValueError('invalid date')
         if date <= datetime.now(timezone.utc):
             raise ValueError('date must be in the future')
         return date
@@ -73,6 +82,9 @@ async def _resolve_id(manager, obj, user_id):
 
 def _delay(value):
     if isinstance(value, str):
+        parsed = grammar.parse_delay(value)
+        if parsed is not None:
+            return _delay(parsed)
         match = re.fullmatch(r'\s*(\d+(?:\.\d+)?)\s+(seconds?|minutes?|hours?)\s*', value, re.IGNORECASE)
         if not match:
             raise intent.IntentHandleError('invalid delay')
@@ -96,12 +108,22 @@ class CreateReminder(intent.IntentHandler):
         text = _slot(intent_obj, 'text')
         if not isinstance(text, str) or not text.strip():
             raise intent.IntentHandleError('text must be a non-blank string')
-        date = _date(_slot(intent_obj, 'date'))
+        date = _date(_slot(intent_obj, 'date'), intent_obj.hass)
         recurrence = _slot(intent_obj, 'recurrence')
+        if isinstance(recurrence, str):
+            recurrence = grammar.parse_recurrence(recurrence) or recurrence
         owner = _slot(intent_obj, 'owner')
         try:
             if owner is not None:
-                owner = await _resolve_recipient(intent_obj.hass, owner, 'owner')
+                error = None
+                for candidate in grammar.parse_recipient(owner):
+                    try:
+                        owner = await _resolve_recipient(intent_obj.hass, candidate, 'owner')
+                        break
+                    except ValueError as err:
+                        error = err
+                else:
+                    raise error
             item = await manager.async_create(text, owner if owner is not None else user, user, date,
                                               recurrence if recurrence is not None else 'none')
         except ValueError as err:
@@ -172,7 +194,7 @@ class SnoozeReminder(intent.IntentHandler):
         if (delay is None) == (date is None):
             raise intent.IntentHandleError('provide either delay or date')
         delay = _delay(delay) if delay is not None else None
-        date = _date(date) if date is not None else None
+        date = _date(date, intent_obj.hass) if date is not None else None
         reminder_id = await _resolve_id(manager, intent_obj, user)
         try:
             item = await manager.async_snooze(reminder_id, delay_seconds=delay, date=date, user_id=user)
