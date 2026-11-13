@@ -4,6 +4,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
 
+from . import intents
 from .api import DOMAIN, ReminderManager
 from .services import async_register_services, async_unregister_services
 from .scheduler import ReminderScheduler
@@ -26,6 +27,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "store": store, "scheduler": scheduler, "manager": manager
     }
+    await intents.async_setup_intents(hass)
     await scheduler.async_start()
     if PLATFORMS:
         await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -35,6 +37,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a Voice Reminders config entry."""
     await async_unregister_services(hass)
+    await intents.async_remove_intents(hass)
     entries = hass.data.get(DOMAIN, {})
     if entry.entry_id in entries:
         await entries[entry.entry_id]["scheduler"].async_cancel()

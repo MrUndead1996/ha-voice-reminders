@@ -15,6 +15,12 @@ core = types.ModuleType('homeassistant.core')
 typing_module = types.ModuleType('homeassistant.helpers.typing')
 storage_module = types.ModuleType('homeassistant.helpers.storage')
 event_module = types.ModuleType('homeassistant.helpers.event')
+intent_module = types.ModuleType('homeassistant.helpers.intent')
+intent_module.IntentHandler = type('IntentHandler', (), {})
+intent_module.IntentHandleError = type('IntentHandleError', (Exception,), {})
+intent_module.async_register = lambda hass, handler: hass.data.setdefault('intent_helpers', {}).__setitem__(handler.intent_type, handler)
+intent_module.async_remove = lambda hass, kind: hass.data.setdefault('intent_helpers', {}).pop(kind, None)
+helpers.intent = intent_module
 config_entries.ConfigEntry = type('ConfigEntry', (), {})
 core.HomeAssistant = type('HomeAssistant', (), {})
 typing_module.ConfigType = dict
@@ -48,7 +54,8 @@ event_module.async_at_time = lambda *args: lambda: None
 for name, module in [('homeassistant', homeassistant), ('homeassistant.helpers', helpers),
                      ('homeassistant.config_entries', config_entries), ('homeassistant.core', core),
                      ('homeassistant.helpers.typing', typing_module),
-                     ('homeassistant.helpers.storage', storage_module), ('homeassistant.helpers.event', event_module)]:
+                     ('homeassistant.helpers.storage', storage_module), ('homeassistant.helpers.event', event_module),
+                     ('homeassistant.helpers.intent', intent_module)]:
     sys.modules[name] = module
 package = types.ModuleType('custom_components.voice_reminders')
 package.__path__ = [str(ROOT / 'custom_components/voice_reminders')]
@@ -282,9 +289,11 @@ def test_setup_and_unload():
         entry = types.SimpleNamespace(entry_id='entry')
         assert await module.async_setup_entry(hass, entry)
         assert len(hass.services.handlers) == 5
+        assert len(hass.data['intent_helpers']) == 4
         assert isinstance(hass.data['voice_reminders']['entry']['manager'], module.ReminderManager)
         assert await module.async_unload_entry(hass, entry)
         assert not hass.services.handlers and not hass.data['voice_reminders']
+        assert not hass.data['intent_helpers']
     asyncio.run(run())
 
 def test_services_access_rules():
