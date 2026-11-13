@@ -286,14 +286,21 @@ def test_setup_and_unload():
         spec.loader.exec_module(module)
         module.ReminderStore, module.ReminderScheduler = FakeStore, FakeScheduler
         hass = FakeHass()
+        listeners = {}
+        def listen(name, handler):
+            listeners[name] = handler
+            return lambda: listeners.pop(name)
+        hass.events = types.SimpleNamespace(async_listen=listen)
         entry = types.SimpleNamespace(entry_id='entry')
         assert await module.async_setup_entry(hass, entry)
+        assert 'mobile_app_notification_action' in listeners
         assert len(hass.services.handlers) == 5
         assert len(hass.data['intent_helpers']) == 4
         assert isinstance(hass.data['voice_reminders']['entry']['manager'], module.ReminderManager)
         assert await module.async_unload_entry(hass, entry)
         assert not hass.services.handlers and not hass.data['voice_reminders']
         assert not hass.data['intent_helpers']
+        assert not listeners
     asyncio.run(run())
 
 def test_services_access_rules():

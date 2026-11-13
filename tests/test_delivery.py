@@ -170,3 +170,108 @@ def test_delivery_hook_personal_notifications():
             await hook(reminder)
         assert [call[:2] for call in hass.services.calls] == [("notify", "phone")]
     asyncio.run(run())
+
+
+def test_parse_snooze_intervals():
+    for value in (None, "", " ", ", ,"):
+        assert delivery.parse_snooze_intervals(value) == []
+    assert delivery.parse_snooze_intervals("10, 60,10 , 1440") == [10, 60, 1440]
+    for value in ("0", "-5", "abc", "1.5", "True-like"):
+        try:
+            delivery.parse_snooze_intervals(value)
+        except ValueError as err:
+            assert str(err) == f"invalid snooze interval: {value}"
+        else:
+            assert False, "expected ValueError"
+    try:
+        delivery.parse_snooze_intervals("1,2,3,4,5,6")
+    except ValueError as err:
+        assert str(err) == "too many snooze intervals"
+    else:
+        assert False, "expected ValueError"
+
+
+def test_notify_snooze_actions():
+    import json
+    async def run():
+        hass = make_hass()
+        reminder = types.SimpleNamespace(id="uuid", text="Due")
+        assert await delivery.async_notify(hass, reminder, "phone", [10, 60])
+        payloads = [call[2] for call in hass.services.calls]
+        assert payloads == [{"message": "Due", "title": "Reminder"}] + [
+            {"message": "Due", "title": f"Snooze {minutes} min",
+             "action": delivery.SNOOZE_ACTION_PREFIX,
+             "action_data": json.dumps({"reminder_id": "uuid", "delay_minutes": minutes})}
+            for minutes in (10, 60)]
+        for intervals in (None, []):
+            hass.services.calls.clear()
+            assert await delivery.async_notify(hass, reminder, "phone", intervals)
+            assert len(hass.services.calls) == 1
+        hass.services.calls.clear()
+        original = hass.services.async_call
+        async def missing_snooze(domain, service, payload, context=None):
+            if payload["title"].startswith("Snooze"):
+                raise exceptions.ServiceNotFound("missing")
+            await original(domain, service, payload, context=context)
+        hass.services.async_call = missing_snooze
+        with __import__("unittest").TestCase().assertLogs(delivery.__name__, level=logging.WARNING):
+            assert not await delivery.async_notify(hass, reminder, "phone", [10, 60])
+        assert len(hass.services.calls) == 1
+    asyncio.run(run())
+
+
+def test_snooze_action_handler():
+    import json
+    async def run():
+        hass = make_hass()
+        listeners = {}
+        unsub = lambda: None
+        hass.events = types.SimpleNamespace(async_listen=lambda name, handler: (listeners.update({name: handler}) or unsub))
+        calls = []
+        async def snooze(reminder_id, **kwargs):
+            calls.append((reminder_id, kwargs))
+        manager = types.SimpleNamespace(async_snooze=snooze)
+        assert delivery.async_register_snooze_actions(hass, manager) is unsub
+        handler = listeners["mobile_app_notification_action"]
+        async def event(action, data):
+            await handler(types.SimpleNamespace(data={"action": action, "action_data": data}))
+        action = delivery.SNOOZE_ACTION_PREFIX
+        await event(action, json.dumps({"reminder_id": "id1", "delay_minutes": 10}))
+        await event(action, {"reminder_id": "id2", "delay_minutes": 2})
+        await event("other", {})
+        assert calls == [("id1", {"delay_seconds": 600}), ("id2", {"delay_seconds": 120})]
+        for data in ({}, "bad json", {"reminder_id": "id", "delay_minutes": 0},
+                     {"reminder_id": 1, "delay_minutes": 1},
+                     {"reminder_id": "id", "delay_minutes": True}):
+            with __import__("unittest").TestCase().assertLogs(delivery.__name__, level=logging.WARNING):
+                await event(action, data)
+        assert len(calls) == 2
+        async def fail(*args, **kwargs):
+            raise ValueError("missing")
+        manager.async_snooze = fail
+        with __import__("unittest").TestCase().assertLogs(delivery.__name__, level=logging.WARNING) as logs:
+            await event(action, {"reminder_id": "unknown", "delay_minutes": 1})
+        assert "unknown" in logs.output[0]
+    asyncio.run(run())
+
+
+def test_delivery_hook_snooze_buttons():
+    async def run():
+        hass = make_hass()
+        settings = {"satellites": "assist_satellite.a", "notify_targets": "owner:phone",
+                    "snooze_intervals": "10, 60"}
+        reminder = types.SimpleNamespace(id="uuid", text="Due", owner_user_id="owner")
+        hook = delivery.async_delivery_hook(hass, settings)
+        await hook(reminder)
+        assert [call[2].get("title") for call in hass.services.calls] == [None, "Reminder", "Snooze 10 min", "Snooze 60 min"]
+        hass.services.calls.clear()
+        settings["snooze_intervals"] = "bad"
+        with __import__("unittest").TestCase().assertLogs(delivery.__name__, level=logging.WARNING) as logs:
+            await hook(reminder)
+        assert "Invalid snooze interval settings" in logs.output[0]
+        assert len(hass.services.calls) == 2
+        hass.services.calls.clear()
+        settings["snooze_intervals"] = ""
+        await hook(reminder)
+        assert len(hass.services.calls) == 2
+    asyncio.run(run())

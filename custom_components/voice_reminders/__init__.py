@@ -6,7 +6,8 @@ from homeassistant.helpers.typing import ConfigType
 
 from . import intents
 from .api import DOMAIN, ReminderManager
-from .delivery import async_delivery_hook, CONF_NOTIFY_TARGETS, CONF_PREANNOUNCE, CONF_SATELLITES
+from .delivery import (async_delivery_hook, async_register_snooze_actions, CONF_NOTIFY_TARGETS,
+                       CONF_PREANNOUNCE, CONF_SATELLITES, CONF_SNOOZE_INTERVALS)
 from .services import async_register_services, async_unregister_services
 from .scheduler import ReminderScheduler
 from .storage import ReminderStore
@@ -28,12 +29,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "satellites": options.get(CONF_SATELLITES, data.get(CONF_SATELLITES, "all")),
         "preannounce": options.get(CONF_PREANNOUNCE, data.get(CONF_PREANNOUNCE, "")),
         "notify_targets": options.get(CONF_NOTIFY_TARGETS, data.get(CONF_NOTIFY_TARGETS, "")),
+        "snooze_intervals": options.get(CONF_SNOOZE_INTERVALS, data.get(CONF_SNOOZE_INTERVALS, "")),
     }
     scheduler = ReminderScheduler(hass, store, async_delivery_hook(hass, settings))
     manager = ReminderManager(store, scheduler)
+    unsub_snooze = async_register_snooze_actions(hass, manager)
     await async_register_services(hass, manager)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "store": store, "scheduler": scheduler, "manager": manager
+        "store": store, "scheduler": scheduler, "manager": manager, "unsub_snooze": unsub_snooze
     }
     await intents.async_setup_intents(hass)
     await scheduler.async_start()
@@ -48,6 +51,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await intents.async_remove_intents(hass)
     entries = hass.data.get(DOMAIN, {})
     if entry.entry_id in entries:
+        unsub_snooze = entries[entry.entry_id].get("unsub_snooze")
+        if unsub_snooze:
+            unsub_snooze()
         await entries[entry.entry_id]["scheduler"].async_cancel()
         entries.pop(entry.entry_id)
     if PLATFORMS:
