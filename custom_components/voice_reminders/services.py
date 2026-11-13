@@ -129,7 +129,8 @@ async def async_register_services(hass: Any, manager: ReminderManager) -> None:
         if user_id is not None:
             await _require_user(hass, user_id, "context user")
         reminder = await manager.async_update(reminder_id, text=data.get("text"), date=date,
-                                              recurrence=data.get("recurrence"), status=data.get("status"))
+                                              recurrence=data.get("recurrence"), status=data.get("status"),
+                                              user_id=user_id)
         return reminder.to_dict()
 
     async def cancel(call: Any) -> dict[str, Any]:
@@ -137,7 +138,7 @@ async def async_register_services(hass: Any, manager: ReminderManager) -> None:
         user_id = _context_user_id(call)
         if user_id is not None:
             await _require_user(hass, user_id, "context user")
-        return (await manager.async_cancel(_required(call.data, "id"))).to_dict()
+        return (await manager.async_cancel(_required(call.data, "id"), user_id=user_id)).to_dict()
 
     async def snooze(call: Any) -> dict[str, Any]:
         """Snooze a reminder by delay or to a date."""
@@ -147,7 +148,8 @@ async def async_register_services(hass: Any, manager: ReminderManager) -> None:
         user_id = _context_user_id(call)
         if user_id is not None:
             await _require_user(hass, user_id, "context user")
-        return (await manager.async_snooze(reminder_id, delay_seconds=data.get("delay"), date=date)).to_dict()
+        return (await manager.async_snooze(reminder_id, delay_seconds=data.get("delay"), date=date,
+                                           user_id=user_id)).to_dict()
 
     for name, handler in zip(_SERVICES, (create, list_reminders, update, cancel, snooze)):
         hass.services.async_register(DOMAIN, name, handler)

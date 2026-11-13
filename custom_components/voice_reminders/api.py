@@ -53,10 +53,12 @@ class ReminderManager:
 
     async def async_update(self, reminder_id: str, text: str | None = None,
                            date: datetime | None = None, recurrence: str | None = None,
-                           status: str | None = None) -> Reminder:
+                           status: str | None = None, *, user_id: str | None = None) -> Reminder:
         """Validate and persist the provided changes to a reminder."""
         reminders = await self._store.async_load()
         original = _find(reminders, reminder_id)
+        if user_id is not None and original.owner_user_id != user_id:
+            raise ValueError("only the recipient can update this reminder")
         if all(value is None for value in (text, date, recurrence, status)):
             raise ValueError("nothing to update")
         if text is not None and (not isinstance(text, str) or not text.strip()):
@@ -79,14 +81,17 @@ class ReminderManager:
         await self._scheduler.async_reminder_updated(reminder_id)
         return reminder
 
-    async def async_cancel(self, reminder_id: str) -> Reminder:
+    async def async_cancel(self, reminder_id: str, *, user_id: str | None = None) -> Reminder:
         """Cancel a reminder and notify the scheduler."""
+        reminder = _find(await self._store.async_load(), reminder_id)
+        if user_id is not None and user_id not in (reminder.owner_user_id, reminder.created_by_user_id):
+            raise ValueError("only the recipient or the creator can cancel this reminder")
         reminder = await self._store.async_update_status(reminder_id, "cancelled")
         await self._scheduler.async_reminder_updated(reminder_id)
         return reminder
 
     async def async_snooze(self, reminder_id: str, delay_seconds: int | float | None = None,
-                           date: datetime | None = None) -> Reminder:
+                           date: datetime | None = None, *, user_id: str | None = None) -> Reminder:
         """Move a pending reminder to a future date."""
         if (delay_seconds is None) == (date is None):
             raise ValueError("provide exactly one of delay_seconds or date")
@@ -96,6 +101,8 @@ class ReminderManager:
             raise ValueError("delay_seconds must be a positive number")
         reminders = await self._store.async_load()
         original = _find(reminders, reminder_id)
+        if user_id is not None and original.owner_user_id != user_id:
+            raise ValueError("only the recipient can snooze this reminder")
         if original.status != "pending":
             raise ValueError("only pending reminders can be snoozed")
         try:

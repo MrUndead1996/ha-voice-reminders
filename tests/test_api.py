@@ -286,3 +286,49 @@ def test_setup_and_unload():
         assert await module.async_unload_entry(hass, entry)
         assert not hass.services.handlers and not hass.data['voice_reminders']
     asyncio.run(run())
+
+def test_services_access_rules():
+    async def run():
+        hass = FakeHass()
+        hass.auth.users['charlie'] = types.SimpleNamespace(id='charlie')
+        manager = api.ReminderManager(FakeStore(), FakeScheduler())
+        await services.async_register_services(hass, manager)
+        async def call(name, data, context=None):
+            return await hass.services.handlers['voice_reminders', name](FakeServiceCall(data, context))
+        alice, bob, charlie = (types.SimpleNamespace(user_id=user) for user in ('alice', 'bob', 'charlie'))
+        async def create(owner):
+            return await call('create', {'text': 'x', 'owner_user_id': owner, 'date': future().isoformat()}, alice)
+        item = await create('bob')
+        for context, operations in ((alice, ('update', 'snooze')), (charlie, ('update', 'snooze', 'cancel'))):
+            for name in operations:
+                fields = {'update': {'text': 'new'}, 'snooze': {'delay': 60}, 'cancel': {}}[name]
+                await raises(call(name, {'id': item['id'], **fields}, context),
+                             {'update': 'only the recipient can update this reminder',
+                              'snooze': 'only the recipient can snooze this reminder',
+                              'cancel': 'only the recipient or the creator can cancel this reminder'}[name])
+        assert (await call('update', {'id': item['id'], 'text': 'bob'}, bob))['text'] == 'bob'
+        assert (await call('snooze', {'id': item['id'], 'delay': 60}, bob))['date'] != item['date']
+        assert (await call('cancel', {'id': item['id']}, bob))['status'] == 'cancelled'
+        other = await create('bob')
+        assert (await call('cancel', {'id': other['id']}, alice))['status'] == 'cancelled'
+        own = await create('alice')
+        assert (await call('update', {'id': own['id'], 'text': 'own'}, alice))['text'] == 'own'
+        assert (await call('snooze', {'id': own['id'], 'delay': 60}, alice))['date'] != own['date']
+        assert (await call('cancel', {'id': own['id']}, alice))['status'] == 'cancelled'
+        automatic = await create('bob')
+        assert (await call('update', {'id': automatic['id'], 'text': 'auto'}))['text'] == 'auto'
+        assert (await call('snooze', {'id': automatic['id'], 'delay': 60}))['date'] != automatic['date']
+        assert (await call('cancel', {'id': automatic['id']}))['status'] == 'cancelled'
+    asyncio.run(run())
+
+def test_manager_access_rules():
+    async def run():
+        manager = api.ReminderManager(FakeStore(), FakeScheduler())
+        item = await manager.async_create('x', 'bob', 'alice', future())
+        await raises(manager.async_update(item.id, text='x', user_id='charlie'), 'only the recipient can update this reminder')
+        await raises(manager.async_snooze(item.id, delay_seconds=60, user_id='charlie'), 'only the recipient can snooze this reminder')
+        await raises(manager.async_cancel(item.id, user_id='charlie'), 'only the recipient or the creator can cancel this reminder')
+        assert (await manager.async_update(item.id, text='auto', user_id=None)).text == 'auto'
+        assert (await manager.async_snooze(item.id, delay_seconds=60, user_id=None)).date > item.date
+        assert (await manager.async_cancel(item.id, user_id=None)).status == 'cancelled'
+    asyncio.run(run())
