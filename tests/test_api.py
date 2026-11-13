@@ -84,9 +84,12 @@ class FakeServices:
 
 class FakeAuth:
     def __init__(self, user_ids):
-        self.user_ids = user_ids
+        self.users = {user_id: types.SimpleNamespace(id=user_id, name=user_id, last_name=None, username=None)
+                      for user_id in user_ids}
     async def async_get_user(self, user_id):
-        return object() if user_id in self.user_ids else None
+        return self.users.get(user_id)
+    async def async_get_users(self):
+        return list(self.users.values())
 
 class FakeHass:
     def __init__(self):
@@ -207,6 +210,35 @@ def test_services_user_context():
             args = {'id': created['id'], **fields}
             await raises(call(name, args, ghost), 'does not exist')
             await call(name, args)
+    asyncio.run(run())
+
+def test_services_recipient_by_name():
+    async def run():
+        hass = FakeHass()
+        hass.auth.users['bob'] = types.SimpleNamespace(id='bob', name='Аня', last_name='Иванова', username='AnyAlias')
+        manager = api.ReminderManager(FakeStore(), FakeScheduler())
+        await services.async_register_services(hass, manager)
+        async def call(name, data, context=None):
+            return await hass.services.handlers['voice_reminders', name](FakeServiceCall(data, context))
+        data = {'text': 'x', 'date': future().isoformat()}
+        created = await call('create', {**data, 'owner': 'Аня'}, types.SimpleNamespace(user_id='alice'))
+        assert created['owner_user_id'] == 'bob' and created['created_by_user_id'] == 'alice'
+        for value in ('anyalias', '  аНя   иВаНоВа  ', 'bob'):
+            result = await call('create', {**data, 'owner': value})
+            assert result['owner_user_id'] == 'bob' and result['created_by_user_id'] == 'bob'
+        await raises(call('create', {**data, 'owner': 'unknown'}), 'owner does not exist: unknown')
+        for value in ('  ', None, 123):
+            await raises(call('create', {**data, 'owner': value}), 'owner must be a non-blank string')
+        await raises(call('create', data), 'missing required field: owner_user_id')
+        await raises(call('create', {**data, 'owner': 'Аня', 'owner_user_id': 'bob'}), 'not both')
+        assert len((await call('list', {'owner': ' ANYALIAS '}))['reminders']) == 4
+        await raises(call('list', {'owner': 'unknown'}), 'does not exist')
+        await raises(call('list', {'owner': ''}), 'non-blank')
+        await raises(call('list', {'owner': 'Аня', 'owner_user_id': 'bob'}), 'not both')
+        hass.auth.users['another'] = types.SimpleNamespace(id='another', name='Аня', last_name=None, username=None)
+        await raises(call('create', {**data, 'owner': 'аня'}), 'owner is ambiguous: аня')
+        await raises(call('list', {'owner': 'Аня'}), 'ambiguous')
+        assert (await call('create', {**data, 'owner': 'bob'}))['owner_user_id'] == 'bob'
     asyncio.run(run())
 
 def test_setup_and_unload():

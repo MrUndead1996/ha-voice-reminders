@@ -28,6 +28,36 @@ async def _require_user(hass, user_id, label):
     return user_id
 
 
+async def _resolve_recipient(hass, value, label):
+    """Resolve a user ID, name, full name, or username to a user ID."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} must be a non-blank string")
+    user = await hass.auth.async_get_user(value)
+    if user is not None:
+        return user.id
+
+    def normalize(text):
+        return " ".join(text.split()).casefold()
+
+    target = normalize(value)
+    matches = []
+    for user in await hass.auth.async_get_users():
+        name = getattr(user, "name", None)
+        last_name = getattr(user, "last_name", None)
+        username = getattr(user, "username", None)
+        candidates = [name, username]
+        if name and last_name:
+            candidates.append(f"{name} {last_name}")
+        if any(isinstance(candidate, str) and normalize(candidate) == target
+               for candidate in candidates):
+            matches.append(user)
+    if not matches:
+        raise ValueError(f"{label} does not exist: {value}")
+    if len(matches) > 1:
+        raise ValueError(f"{label} is ambiguous: {value}")
+    return matches[0].id
+
+
 def _parse_date(value: Any) -> datetime:
     """Parse a timezone-aware ISO datetime."""
     if not isinstance(value, str):
@@ -47,8 +77,13 @@ async def async_register_services(hass: Any, manager: ReminderManager) -> None:
         """Create a reminder from service data."""
         data = call.data
         text = _required(data, "text")
-        owner = _required(data, "owner_user_id")
-        await _require_user(hass, owner, "owner_user_id")
+        if "owner_user_id" in data and "owner" in data:
+            raise ValueError("provide either owner_user_id or owner, not both")
+        if "owner" in data:
+            owner = await _resolve_recipient(hass, data["owner"], "owner")
+        else:
+            owner = _required(data, "owner_user_id")
+            await _require_user(hass, owner, "owner_user_id")
         creator = _context_user_id(call) or data.get("created_by_user_id", owner)
         await _require_user(hass, creator, "created_by_user_id")
         date = _parse_date(_required(data, "date"))
@@ -58,10 +93,15 @@ async def async_register_services(hass: Any, manager: ReminderManager) -> None:
 
     async def list_reminders(call: Any) -> dict[str, Any]:
         """List reminders matching the service filters."""
-        owner = call.data.get("owner_user_id")
-        if owner is not None:
+        data = call.data
+        if "owner_user_id" in data and "owner" in data:
+            raise ValueError("provide either owner_user_id or owner, not both")
+        owner = data.get("owner_user_id")
+        if "owner" in data:
+            owner = await _resolve_recipient(hass, data["owner"], "owner")
+        elif owner is not None:
             await _require_user(hass, owner, "owner_user_id")
-        items = await manager.async_list(call.data.get("owner_user_id"), call.data.get("status"))
+        items = await manager.async_list(owner, data.get("status"))
         return {"reminders": [item.to_dict() for item in items]}
 
     async def update(call: Any) -> dict[str, Any]:
