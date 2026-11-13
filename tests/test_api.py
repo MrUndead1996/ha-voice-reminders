@@ -1,0 +1,195 @@
+"""Standalone tests for reminder management and services."""
+import asyncio
+import importlib
+import importlib.util
+import sys
+import types
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+homeassistant = types.ModuleType('homeassistant')
+helpers = types.ModuleType('homeassistant.helpers')
+config_entries = types.ModuleType('homeassistant.config_entries')
+core = types.ModuleType('homeassistant.core')
+typing_module = types.ModuleType('homeassistant.helpers.typing')
+storage_module = types.ModuleType('homeassistant.helpers.storage')
+event_module = types.ModuleType('homeassistant.helpers.event')
+config_entries.ConfigEntry = type('ConfigEntry', (), {})
+core.HomeAssistant = type('HomeAssistant', (), {})
+typing_module.ConfigType = dict
+
+class FakeStore:
+    def __init__(self, *args):
+        self.data = []
+    async def async_load(self):
+        return self.data.copy()
+    async def async_save(self, items):
+        self.data = items.copy()
+    async def async_add(self, item):
+        self.data.append(item)
+    async def async_update_status(self, reminder_id, status):
+        for item in self.data:
+            if item.id == reminder_id:
+                item.set_status(status)
+                return item
+        raise ValueError('reminder not found')
+
+class FakeHAStore:
+    def __init__(self, *args):
+        self.data = None
+    async def async_load(self):
+        return self.data
+    async def async_save(self, data):
+        self.data = data
+
+storage_module.Store = FakeHAStore
+event_module.async_at_time = lambda *args: lambda: None
+for name, module in [('homeassistant', homeassistant), ('homeassistant.helpers', helpers),
+                     ('homeassistant.config_entries', config_entries), ('homeassistant.core', core),
+                     ('homeassistant.helpers.typing', typing_module),
+                     ('homeassistant.helpers.storage', storage_module), ('homeassistant.helpers.event', event_module)]:
+    sys.modules[name] = module
+package = types.ModuleType('custom_components.voice_reminders')
+package.__path__ = [str(ROOT / 'custom_components/voice_reminders')]
+sys.modules['custom_components.voice_reminders'] = package
+api = importlib.import_module('custom_components.voice_reminders.api')
+services = importlib.import_module('custom_components.voice_reminders.services')
+
+class FakeScheduler:
+    def __init__(self, *args):
+        self.calls = []
+    async def async_reminder_added(self, reminder_id):
+        self.calls.append(('added', reminder_id))
+    async def async_reminder_updated(self, reminder_id):
+        self.calls.append(('updated', reminder_id))
+    async def async_reminder_removed(self, reminder_id):
+        self.calls.append(('removed', reminder_id))
+    async def async_start(self):
+        pass
+    async def async_cancel(self):
+        pass
+    async def async_reschedule(self):
+        pass
+
+class FakeServices:
+    def __init__(self):
+        self.handlers = {}
+    def async_register(self, domain, name, handler):
+        self.handlers[domain, name] = handler
+    def async_remove(self, domain, name):
+        del self.handlers[domain, name]
+    def has_service(self, domain, name):
+        return (domain, name) in self.handlers
+
+class FakeHass:
+    def __init__(self):
+        self.data = {}
+        self.services = FakeServices()
+
+class FakeServiceCall:
+    def __init__(self, data):
+        self.data = data
+
+def future():
+    return datetime.now(timezone.utc) + timedelta(days=1)
+
+async def raises(awaitable, message=None):
+    try:
+        await awaitable
+    except ValueError as err:
+        if message is not None:
+            assert message in str(err), str(err)
+    else:
+        assert False, 'expected ValueError'
+
+def test_manager_create_and_list():
+    async def run():
+        store, scheduler = FakeStore(), FakeScheduler()
+        manager = api.ReminderManager(store, scheduler)
+        a = await manager.async_create('first', 'alice', 'alice', future())
+        b = await manager.async_create('second', 'bob', 'alice', future(), 'daily')
+        b.set_status('done')
+        assert scheduler.calls == [('added', a.id), ('added', b.id)]
+        assert await manager.async_list(owner_user_id='alice') == [a]
+        assert await manager.async_list(status='done') == [b]
+        assert await manager.async_list(owner_user_id='alice', status='done') == []
+        for date in (datetime.now(), datetime.now(timezone.utc) - timedelta(seconds=1)):
+            await raises(manager.async_create('x', 'a', 'a', date), 'date must be timezone-aware and in the future')
+        await raises(manager.async_create('x', 'a', 'a', future(), 'bad'))
+    asyncio.run(run())
+
+def test_manager_update_cancel():
+    async def run():
+        store, scheduler = FakeStore(), FakeScheduler()
+        manager = api.ReminderManager(store, scheduler)
+        item = await manager.async_create('first', 'a', 'a', future())
+        date = future() + timedelta(days=1)
+        updated = await manager.async_update(item.id, text='new', date=date, recurrence='weekly', status='done')
+        assert (updated.text, updated.date, updated.recurrence, updated.status) == ('new', date, 'weekly', 'done')
+        for fields in ({}, {'text': ' '}, {'recurrence': 'bad'}, {'status': 'bad'},
+                       {'date': datetime.now()}, {'date': datetime.now(timezone.utc) - timedelta(days=1)}):
+            await raises(manager.async_update(item.id, **fields))
+        await raises(manager.async_update('missing', text='x'), 'reminder not found')
+        assert (await manager.async_cancel(item.id)).status == 'cancelled'
+        assert scheduler.calls[-1] == ('updated', item.id)
+        await raises(manager.async_cancel('missing'), 'reminder not found')
+    asyncio.run(run())
+
+def test_manager_snooze():
+    async def run():
+        store, scheduler = FakeStore(), FakeScheduler()
+        manager = api.ReminderManager(store, scheduler)
+        item = await manager.async_create('x', 'a', 'a', future())
+        initial = item.date
+        assert (await manager.async_snooze(item.id, delay_seconds=60)).date == initial + timedelta(seconds=60)
+        date = future() + timedelta(days=3)
+        assert (await manager.async_snooze(item.id, date=date)).date == date
+        assert scheduler.calls[-1] == ('updated', item.id)
+        for kwargs in ({}, {'date': date, 'delay_seconds': 1}, {'delay_seconds': 0},
+                       {'delay_seconds': -1}, {'delay_seconds': True}, {'delay_seconds': '2'},
+                       {'date': datetime.now()}, {'date': datetime.now(timezone.utc) - timedelta(days=1)}):
+            await raises(manager.async_snooze(item.id, **kwargs))
+        await manager.async_cancel(item.id)
+        await raises(manager.async_snooze(item.id, delay_seconds=1), 'only pending reminders can be snoozed')
+        await raises(manager.async_snooze('missing', delay_seconds=1), 'reminder not found')
+    asyncio.run(run())
+
+def test_services():
+    async def run():
+        hass = FakeHass()
+        manager = api.ReminderManager(FakeStore(), FakeScheduler())
+        await services.async_register_services(hass, manager)
+        assert set(name for domain, name in hass.services.handlers) == {'create', 'list', 'update', 'cancel', 'snooze'}
+        async def call(name, data):
+            return await hass.services.handlers['voice_reminders', name](FakeServiceCall(data))
+        date = future().isoformat()
+        created = await call('create', {'text': 'x', 'owner_user_id': 'a', 'date': date})
+        assert created['created_by_user_id'] == 'a' and created['date'] == date
+        assert (await call('list', {}))['reminders'] == [created]
+        assert (await call('update', {'id': created['id'], 'text': 'new'}))['text'] == 'new'
+        assert (await call('snooze', {'id': created['id'], 'delay': 60}))['date'] != date
+        assert (await call('cancel', {'id': created['id']}))['status'] == 'cancelled'
+        await raises(call('create', {}), 'missing required field: text')
+        for value in ('bad', '2025-01-01T12:00:00', 123, None):
+            await raises(call('create', {'text': 'x', 'owner_user_id': 'a', 'date': value}), 'date')
+        await raises(call('update', {'id': created['id'], 'date': '2025-01-01T12:00:00'}), 'date')
+        await services.async_unregister_services(hass)
+        assert not hass.services.handlers
+    asyncio.run(run())
+
+def test_setup_and_unload():
+    async def run():
+        spec = importlib.util.spec_from_file_location('voice_reminders_setup_test', ROOT / 'custom_components/voice_reminders/__init__.py', submodule_search_locations=[str(ROOT / 'custom_components/voice_reminders')])
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        module.ReminderStore, module.ReminderScheduler = FakeStore, FakeScheduler
+        hass = FakeHass()
+        entry = types.SimpleNamespace(entry_id='entry')
+        assert await module.async_setup_entry(hass, entry)
+        assert len(hass.services.handlers) == 5
+        assert isinstance(hass.data['voice_reminders']['entry']['manager'], module.ReminderManager)
+        assert await module.async_unload_entry(hass, entry)
+        assert not hass.services.handlers and not hass.data['voice_reminders']
+    asyncio.run(run())
