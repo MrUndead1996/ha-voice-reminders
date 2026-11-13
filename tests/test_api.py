@@ -4,6 +4,7 @@ import importlib
 import importlib.util
 import sys
 import types
+import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -103,6 +104,9 @@ class FakeHass:
         self.data = {}
         self.services = FakeServices()
         self.auth = FakeAuth({"a", "alice", "bob"})
+        self.config = types.SimpleNamespace(config_dir=tempfile.mkdtemp())
+    async def async_add_executor_job(self, func, *args):
+        return func(*args)
 
 class FakeServiceCall:
     def __init__(self, data, context=None):

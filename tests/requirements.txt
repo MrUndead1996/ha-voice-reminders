@@ -1,0 +1,3 @@
+# Install into an isolated test environment to run template recognition tests.
+hassil==3.12.1
+PyYAML>=6.0,<7

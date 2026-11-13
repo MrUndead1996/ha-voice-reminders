@@ -1,0 +1,101 @@
+language: ru
+
+# This file is copied to config/custom_sentences/ru by the integration.
+intents:
+  voice_reminders.CreateReminder:
+    data:
+      - sentences:
+          - "<create> через {count} {unit} {text}"
+          - "<create> {text} через {count} {unit}"
+      - sentences:
+          - "<create> через {unit} {text}"
+          - "<create> {text} через {unit}"
+        slots:
+          count: "1"
+      - sentences:
+          - "<create> через полчаса {text}"
+          - "<create> {text} через полчаса"
+        slots:
+          count: "30"
+          unit: minutes
+      - sentences:
+          - "<create> {dayref} в {hour}[:{minute}] {text}"
+          - "<create> {text} {dayref} в {hour}[:{minute}]"
+      - sentences:
+          - "<create> сегодня вечером {text}"
+          - "<create> {text} сегодня вечером"
+        slots:
+          dayref: "0"
+          hour: "19"
+          minute: "0"
+      - sentences:
+          - "<repeat> {freq} в {hour}[:{minute}] {text}"
+          - "<repeat> {freq} {text} в {hour}[:{minute}]"
+        slots:
+          dayref: "0"
+  voice_reminders.ListReminders:
+    data:
+      - sentences:
+          - "(какие|прочитай|покажи) мои напоминания"
+          - "(список|прочитай|покажи) моих напоминаний"
+        slots:
+          view: mine
+  voice_reminders.CancelReminder:
+    data:
+      - sentences:
+          - "(отмени|удали|убери) напоминание {text}"
+  voice_reminders.SnoozeReminder:
+    data:
+      - sentences:
+          - "(отложи|перенеси) напоминание {text} на {count} {snooze_unit}"
+lists:
+  count:
+    range:
+      type: number
+      from: 1
+      to: 600
+  unit:
+    values:
+      - in: "(минуту|минуты|минут|мин)"
+        out: minutes
+      - in: "(час|часа|часов)"
+        out: hours
+      - in: "(день|дня|дней|сутки|суток)"
+        out: days
+      - in: "(неделю|недели|недель)"
+        out: weeks
+  snooze_unit:
+    values:
+      - in: "(минуту|минуты|минут|мин)"
+        out: minutes
+      - in: "(час|часа|часов)"
+        out: hours
+  dayref:
+    values:
+      - in: "сегодня"
+        out: "0"
+      - in: "завтра"
+        out: "1"
+  hour:
+    range:
+      type: number
+      from: 0
+      to: 23
+  minute:
+    range:
+      type: number
+      from: 0
+      to: 59
+  freq:
+    values:
+      - in: "(каждый день|ежедневно)"
+        out: daily
+      - in: "(каждую неделю|еженедельно)"
+        out: weekly
+      - in: "(каждый месяц|ежемесячно)"
+        out: monthly
+  text:
+    wildcard: true
+expansion_rules:
+  create: "(напомни мне|напомни|создай напоминание|поставь напоминание)"
+  repeat: "(напоминай мне|напоминай|создай напоминание)"

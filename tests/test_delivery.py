@@ -221,6 +221,29 @@ def test_notify_snooze_actions():
     asyncio.run(run())
 
 
+def test_snooze_listener_uses_home_assistant_bus():
+    """Register and unsubscribe without a nonexistent hass.events attribute."""
+    class HomeAssistant:
+        __slots__ = ("bus",)
+
+    listeners = {}
+
+    def listen(event_type, handler):
+        listeners[event_type] = handler
+
+        def unsubscribe():
+            del listeners[event_type]
+
+        return unsubscribe
+
+    hass = HomeAssistant()
+    hass.bus = types.SimpleNamespace(async_listen=listen)
+    unsubscribe = delivery.async_register_snooze_actions(hass, types.SimpleNamespace())
+    assert "mobile_app_notification_action" in listeners
+    unsubscribe()
+    assert not listeners
+
+
 def test_snooze_action_handler():
     import json
     async def run():

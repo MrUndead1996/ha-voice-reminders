@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import traceback
 import types
+import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -16,7 +17,7 @@ sys.modules["custom_components.voice_reminders"] = package
 
 def main() -> int:
     """Run every test function and report the results."""
-    passed = failed = 0
+    passed = failed = skipped = 0
     for path in sorted(Path(__file__).resolve().parent.glob("test_*.py")):
         try:
             spec = importlib.util.spec_from_file_location(path.stem, path)
@@ -32,6 +33,9 @@ def main() -> int:
                 continue
             try:
                 function()
+            except unittest.SkipTest as err:
+                skipped += 1
+                print(f"SKIP {path.name}::{name} ({err})")
             except Exception:
                 failed += 1
                 print(f"FAIL {path.name}::{name}")
@@ -39,7 +43,7 @@ def main() -> int:
             else:
                 passed += 1
                 print(f"PASS {path.name}::{name}")
-    print(f"{passed} passed, {failed} failed")
+    print(f"{passed} passed, {failed} failed, {skipped} skipped")
     return 1 if failed else 0
 
 

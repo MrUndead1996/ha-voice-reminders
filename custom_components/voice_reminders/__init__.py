@@ -1,5 +1,8 @@
 """Set up the Voice Reminders integration."""
 
+import logging
+from pathlib import Path
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
@@ -11,8 +14,10 @@ from .delivery import (async_delivery_hook, async_register_snooze_actions, CONF_
 from .services import async_register_services, async_unregister_services
 from .scheduler import ReminderScheduler
 from .storage import ReminderStore
+from .sentence_install import install_sentences
 
 PLATFORMS: list = []
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -22,6 +27,27 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up a Voice Reminders config entry."""
+    try:
+        result = await hass.async_add_executor_job(
+            install_sentences, hass.config.config_dir, str(Path(__file__).parent)
+        )
+    except OSError:
+        # Sentence publication is best-effort and must not prevent reminders
+        # from working if the HA config directory is read-only.
+        _LOGGER.exception("Could not install Russian Assist sentences")
+        result = "error"
+    if result == "conflict":
+        _LOGGER.warning(
+            "Russian Assist sentence file %s already exists and is not an unchanged "
+            "Voice Reminders file; leaving it untouched. Review/merge it manually. "
+            "No sentence changes are active until Home Assistant restarts.",
+            Path(hass.config.config_dir) / "custom_sentences" / "ru" / "voice_reminders.yaml",
+        )
+    elif result in ("created", "updated"):
+        _LOGGER.info(
+            "Russian Assist sentences %s; restart Home Assistant for changes to load.",
+            result,
+        )
     store = ReminderStore(hass)
     options = getattr(entry, "options", {})
     data = getattr(entry, "data", {})

@@ -1,5 +1,5 @@
 """Assist intent handlers for voice reminders."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import math
 import re
 from zoneinfo import ZoneInfo
@@ -71,7 +71,22 @@ def _user(obj):
 
 def _date(value, obj):
     hass = obj.hass
+    generated_clock = False
     try:
+        # Sentence grammar can provide a normalized duration or calendar/time
+        # parts instead of a single free-form date string.
+        if value is None:
+            count, unit = _slot(obj, 'count'), _slot(obj, 'unit')
+            if count is not None and unit is not None:
+                value = f'через {count} {unit}'
+            else:
+                dayref, hour, minute = (_slot(obj, name) for name in ('dayref', 'hour', 'minute'))
+                if hour is not None:
+                    generated_clock = True
+                    when = 'сегодня' if dayref in (None, '0') else 'завтра' if str(dayref) == '1' else str(dayref)
+                    value = f'{when} в {int(hour):02d}:{int(minute or 0):02d}'
+        if not isinstance(value, (str, datetime)):
+            raise ValueError('invalid date')
         try:
             date = _parse_date(value)
         except ValueError:
@@ -81,6 +96,12 @@ def _date(value, obj):
             date = grammar.parse_datetime(value.strip(), datetime.now(timezone.utc), ZoneInfo(zone) if zone else None)
             if date is None:
                 raise ValueError('invalid date')
+        if generated_clock and _slot(obj, 'freq') in ('daily', 'weekly', 'monthly'):
+            now = datetime.now(timezone.utc)
+            if date <= now:
+                zone = getattr(getattr(hass, 'config', None), 'time_zone', None)
+                local = date.astimezone(ZoneInfo(zone) if zone else timezone.utc)
+                date = (local + timedelta(days=1)).astimezone(timezone.utc)
         if date <= datetime.now(timezone.utc):
             raise ValueError('date must be in the future')
         return date
@@ -159,7 +180,7 @@ class CreateReminder(intent.IntentHandler):
         if not isinstance(text, str) or not text.strip():
             _error(intent_obj, 'text must be a non-blank string', _RU_ERRORS['text must be a non-blank string'])
         date = _date(_slot(intent_obj, 'date'), intent_obj)
-        recurrence = _slot(intent_obj, 'recurrence')
+        recurrence = _slot(intent_obj, 'recurrence') or _slot(intent_obj, 'freq')
         if isinstance(recurrence, str):
             recurrence = grammar.parse_recurrence(recurrence) or recurrence
         owner = _slot(intent_obj, 'owner')
@@ -263,6 +284,9 @@ class SnoozeReminder(intent.IntentHandler):
                              'Say the reminder name or id.', 'Назовите напоминание или его идентификатор.')
         _identifier(intent_obj)
         delay, date = _slot(intent_obj, 'delay'), _slot(intent_obj, 'date')
+        delay_unit = _slot(intent_obj, 'unit') or _slot(intent_obj, 'snooze_unit')
+        if delay is None and _slot(intent_obj, 'count') is not None and delay_unit is not None:
+            delay = f"{_slot(intent_obj, 'count')} {delay_unit}"
         if delay is None and date is None:
             return _question(intent_obj, 'How long should I snooze the reminder?', 'На сколько отложить напоминание?',
                              'Give a duration, e.g. 10 minutes.', 'Укажите задержку, например 10 минут.')

@@ -3,6 +3,7 @@ import asyncio
 import importlib
 import sys
 import types
+import unittest
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
@@ -200,6 +201,14 @@ def test_russian_slots():
             with patch.object(manager, 'async_create', create):
                 await call('CreateReminder', 'bob', text='полить цветы', date='завтра в 15:00', recurrence='каждую неделю', owner='Ане')
                 assert (captured[-1].owner_user_id, captured[-1].recurrence, captured[-1].date) == ('anya', 'weekly', expected)
+                await call('CreateReminder', 'bob', text='полить цветы', count='5', unit='minutes')
+                assert captured[-1].date == now + timedelta(minutes=5)
+                await call('CreateReminder', 'bob', text='позвонить', dayref='1', hour='15', minute='30')
+                assert captured[-1].date == grammar.parse_datetime('завтра в 15:30', now, ZoneInfo('Europe/Moscow'))
+                await call('CreateReminder', 'bob', text='вынести мусор', dayref='0', hour='8', freq='daily')
+                assert captured[-1].recurrence == 'daily'
+                await raises(call('CreateReminder', 'bob', text='x', date='сегодня в 08:00', recurrence='daily'), 'future')
+                await raises(call('CreateReminder', 'bob', text='x', date='сегодня в 08:00', recurrence='none'), 'future')
                 await call('CreateReminder', 'bob', text='x', date='через 2 часа', owner='Сашу')
                 assert captured[-1].owner_user_id == 'sasha' and captured[-1].date == now + timedelta(hours=2)
                 await raises(call('CreateReminder', 'bob', text='x', date='через 2 часа', owner='Василия'), 'does not exist')
@@ -209,6 +218,87 @@ def test_russian_slots():
         await call('SnoozeReminder', 'bob', id=item.id, delay='через двадцать минут')
         assert (await manager.async_list())[0].date == original + timedelta(seconds=1200)
     asyncio.run(run())
+
+
+def test_hassil_russian_recognition_and_handler_flow():
+    """Exercise the shipped templates with HassIL, then feed slots to handlers."""
+    try:
+        import yaml
+        from hassil.intents import Intents
+        from hassil.recognize import recognize
+    except ImportError as err:
+        raise unittest.SkipTest("install tests/requirements.txt for HassIL recognition") from err
+
+    grammar_path = ROOT / 'custom_components/voice_reminders/sentences/ru/voice_reminders.yaml'
+    data = yaml.safe_load(grammar_path.read_text(encoding='utf-8'))
+    parsed_intents = Intents.from_dict(data)
+
+    def match(text):
+        return recognize(text, parsed_intents, language='ru')
+
+    relative = match('напомни мне через 5 минут полить цветы')
+    assert relative and relative.intent.name == 'voice_reminders.CreateReminder'
+    assert relative.entities['count'].value == 5
+    assert relative.entities['unit'].value == 'minutes'
+    assert relative.entities['text'].value == 'полить цветы'
+
+    absolute = match('напомни мне завтра в 15:30 позвонить маме')
+    assert absolute and absolute.intent.name == 'voice_reminders.CreateReminder'
+    assert absolute.entities['dayref'].value == '1'
+    assert absolute.entities['hour'].value == 15
+    assert absolute.entities['minute'].value == 30
+
+    recurring = match('напоминай мне каждый день в 8 полить цветы')
+    assert recurring and recurring.intent.name == 'voice_reminders.CreateReminder'
+    assert recurring.entities['freq'].value == 'daily'
+
+    for phrase in (
+        'напомни мне через минуту полить цветы',
+        'напомни мне через пять минут полить цветы',
+        'напомни мне полить цветы через полчаса',
+        'напомни мне через 2 дня полить цветы',
+        'напомни мне через неделю полить цветы',
+        'напомни мне завтра в 15:05 полить цветы',
+        'напоминай мне каждую неделю в 8 полить цветы',
+        'напоминай мне каждый месяц в 8 полить цветы',
+    ):
+        recognized = match(phrase)
+        assert recognized and recognized.intent.name == 'voice_reminders.CreateReminder', phrase
+    for phrase, expected in (
+        ('покажи мои напоминания', 'ListReminders'),
+        ('отмени напоминание полить цветы', 'CancelReminder'),
+        ('отложи напоминание полить цветы на 5 минут', 'SnoozeReminder'),
+    ):
+        recognized = match(phrase)
+        assert recognized and recognized.intent.name == f'voice_reminders.{expected}', phrase
+
+    assert match('отмени все напоминания') is None
+    assert match('напомни мне в следующую среду купить хлеб') is None
+
+    async def flow():
+        _, manager, call = await setup()
+        captured = []
+        async def create(text, owner, user, date, recurrence):
+            item = types.SimpleNamespace(text=text, owner_user_id=owner, date=date, recurrence=recurrence)
+            captured.append(item)
+            return item
+        with patch.object(manager, 'async_create', create):
+            for phrase in (
+                'напомни мне через минуту полить цветы',
+                'напомни мне через пять минут полить цветы',
+                'напомни мне через неделю полить цветы',
+                'напомни мне завтра в 15:05 полить цветы',
+                'напоминай мне каждый день в 8 полить цветы',
+            ):
+                recognized = match(phrase)
+                slot_values = {name: entity.value for name, entity in recognized.entities.items()}
+                await call('CreateReminder', 'bob', **slot_values)
+                assert captured[-1].date > datetime.now(timezone.utc), phrase
+        assert captured and captured[0].owner_user_id == 'bob'
+        assert captured[0].text == 'полить цветы'
+        assert captured[0].date > datetime.now(timezone.utc)
+
+    asyncio.run(flow())
 
 
 def test_english_slots():
