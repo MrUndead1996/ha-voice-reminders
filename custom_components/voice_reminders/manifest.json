@@ -1,9 +1,11 @@
 {
   "domain": "voice_reminders",
   "name": "Voice Reminders",
-  "codeowners": ["MrUndead1996"],
+  "codeowners": ["@MrUndead1996"],
   "config_flow": true,
+  "documentation": "https://github.com/MrUndead1996/ha-voice-reminders",
   "integration_type": "service",
+  "issue_tracker": "https://github.com/MrUndead1996/ha-voice-reminders/issues",
   "requirements": [],
   "version": "0.1.0"
 }
