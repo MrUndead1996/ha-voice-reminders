@@ -19,12 +19,15 @@
       "init": {
         "title": "Reminder settings",
         "data": {
-          "interval_minutes": "Interval (minutes)"
+          "interval_minutes": "Interval (minutes)",
+          "satellites": "Satellite entity ids (comma-separated) or \"all\"",
+          "preannounce": "Pre-announce phrase"
         }
       }
     },
     "error": {
-      "invalid_interval": "Enter an interval between 1 and 1440 minutes."
+      "invalid_interval": "Enter an interval between 1 and 1440 minutes.",
+      "invalid_satellites": "Invalid satellite list"
     }
   }
 }

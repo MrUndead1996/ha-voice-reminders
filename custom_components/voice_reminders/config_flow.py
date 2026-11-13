@@ -7,6 +7,8 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 
+from .delivery import CONF_PREANNOUNCE, CONF_SATELLITES, _ENTITY_ID_RE
+
 DOMAIN = "voice_reminders"
 CONF_NAME = "name"
 CONF_INTERVAL = "interval_minutes"
@@ -59,9 +61,26 @@ class VoiceRemindersOptionsFlow(config_entries.OptionsFlow):
         errors = {}
         if user_input is not None:
             errors = _interval_errors(user_input)
+            satellites = user_input.get(CONF_SATELLITES, "all").strip()
+            if satellites and satellites != "all" and any(
+                not _ENTITY_ID_RE.fullmatch(part.strip())
+                for part in satellites.split(",") if part.strip()
+            ):
+                errors[CONF_SATELLITES] = "invalid_satellites"
             if not errors:
                 return self.async_create_entry(title="", data=user_input)
         interval = self.config_entry.options.get(
             CONF_INTERVAL, self.config_entry.data.get(CONF_INTERVAL, DEFAULT_INTERVAL)
         )
-        return self.async_show_form(step_id="init", data_schema=_schema(interval), errors=errors)
+        satellites = self.config_entry.options.get(
+            CONF_SATELLITES, self.config_entry.data.get(CONF_SATELLITES, "all")
+        )
+        preannounce = self.config_entry.options.get(
+            CONF_PREANNOUNCE, self.config_entry.data.get(CONF_PREANNOUNCE, "")
+        )
+        schema = vol.Schema({
+            vol.Required(CONF_INTERVAL, default=interval): int,
+            vol.Optional(CONF_SATELLITES, default=satellites): str,
+            vol.Optional(CONF_PREANNOUNCE, default=preannounce): str,
+        })
+        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
