@@ -1,0 +1,9 @@
+{
+  "domain": "voice_reminders",
+  "name": "Voice Reminders",
+  "codeowners": ["MrUndead1996"],
+  "config_flow": true,
+  "integration_type": "service",
+  "requirements": [],
+  "version": "0.1.0"
+}

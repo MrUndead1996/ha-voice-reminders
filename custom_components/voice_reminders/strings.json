@@ -1,0 +1,30 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Voice Reminders",
+        "description": "Configure the reminder settings.",
+        "data": {
+          "name": "Name",
+          "interval_minutes": "Interval (minutes)"
+        }
+      }
+    },
+    "error": {
+      "invalid_interval": "Enter an interval between 1 and 1440 minutes."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Reminder settings",
+        "data": {
+          "interval_minutes": "Interval (minutes)"
+        }
+      }
+    },
+    "error": {
+      "invalid_interval": "Enter an interval between 1 and 1440 minutes."
+    }
+  }
+}
