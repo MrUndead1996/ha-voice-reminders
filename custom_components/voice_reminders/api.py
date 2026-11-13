@@ -43,11 +43,13 @@ class ReminderManager:
         return reminder
 
     async def async_list(self, owner_user_id: str | None = None,
-                         status: str | None = None) -> list[Reminder]:
+                         status: str | None = None,
+                         created_by_user_id: str | None = None) -> list[Reminder]:
         """Return reminders matching the supplied filters."""
         reminders = await self._store.async_load()
         return [item for item in reminders if (owner_user_id is None or item.owner_user_id == owner_user_id)
-                and (status is None or item.status == status)]
+                and (status is None or item.status == status)
+                and (created_by_user_id is None or item.created_by_user_id == created_by_user_id)]
 
     async def async_update(self, reminder_id: str, text: str | None = None,
                            date: datetime | None = None, recurrence: str | None = None,

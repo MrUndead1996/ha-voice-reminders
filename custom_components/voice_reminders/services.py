@@ -94,6 +94,22 @@ async def async_register_services(hass: Any, manager: ReminderManager) -> None:
     async def list_reminders(call: Any) -> dict[str, Any]:
         """List reminders matching the service filters."""
         data = call.data
+        if "view" in data:
+            view = data["view"]
+            if not isinstance(view, str) or view not in {"mine", "created"}:
+                raise ValueError(f"invalid view: {view}")
+            if "owner" in data or "owner_user_id" in data:
+                raise ValueError("provide either view or owner, not both")
+            user_id = _context_user_id(call)
+            if user_id is None:
+                raise ValueError("view requires a calling user")
+            await _require_user(hass, user_id, "context user")
+            if view == "mine":
+                items = await manager.async_list(owner_user_id=user_id, status=data.get("status"))
+            else:
+                items = await manager.async_list(created_by_user_id=user_id, status=data.get("status"))
+                items = [item for item in items if item.owner_user_id != user_id]
+            return {"reminders": [item.to_dict() for item in items]}
         if "owner_user_id" in data and "owner" in data:
             raise ValueError("provide either owner_user_id or owner, not both")
         owner = data.get("owner_user_id")

@@ -124,6 +124,7 @@ def test_manager_create_and_list():
         assert scheduler.calls == [('added', a.id), ('added', b.id)]
         assert await manager.async_list(owner_user_id='alice') == [a]
         assert await manager.async_list(status='done') == [b]
+        assert await manager.async_list(created_by_user_id='alice') == [a, b]
         assert await manager.async_list(owner_user_id='alice', status='done') == []
         for date in (datetime.now(), datetime.now(timezone.utc) - timedelta(seconds=1)):
             await raises(manager.async_create('x', 'a', 'a', date), 'date must be timezone-aware and in the future')
@@ -210,6 +211,35 @@ def test_services_user_context():
             args = {'id': created['id'], **fields}
             await raises(call(name, args, ghost), 'does not exist')
             await call(name, args)
+    asyncio.run(run())
+
+def test_services_personal_lists():
+    async def run():
+        hass = FakeHass()
+        manager = api.ReminderManager(FakeStore(), FakeScheduler())
+        await services.async_register_services(hass, manager)
+        async def call(name, data, context=None):
+            return await hass.services.handlers['voice_reminders', name](FakeServiceCall(data, context))
+        alice = types.SimpleNamespace(user_id='alice')
+        bob = types.SimpleNamespace(user_id='bob')
+        ghost = types.SimpleNamespace(user_id='ghost')
+        data = {'text': 'x', 'date': future().isoformat()}
+        own = await call('create', {**data, 'owner_user_id': 'alice'}, alice)
+        for_bob = await call('create', {**data, 'owner_user_id': 'bob'}, alice)
+        from_bob = await call('create', {**data, 'owner_user_id': 'alice'}, bob)
+        assert (await call('list', {'view': 'mine'}, alice))['reminders'] == [own, from_bob]
+        assert (await call('list', {'view': 'created'}, alice))['reminders'] == [for_bob]
+        await call('cancel', {'id': own['id']}, alice)
+        assert (await call('list', {'view': 'mine', 'status': 'pending'}, alice))['reminders'] == [from_bob]
+        assert (await call('list', {'view': 'created', 'status': 'pending'}, alice))['reminders'] == [for_bob]
+        for view in ('mine', 'created'):
+            await raises(call('list', {'view': view}), 'view requires a calling user')
+        await raises(call('list', {'view': 'mine'}, ghost), 'does not exist')
+        for view in ('bad', None, []):
+            await raises(call('list', {'view': view}, alice), 'invalid view')
+        for key in ('owner', 'owner_user_id'):
+            await raises(call('list', {'view': 'mine', key: 'bob'}, alice), 'not both')
+        assert (await call('list', {'owner': 'bob'}))['reminders'] == [for_bob]
     asyncio.run(run())
 
 def test_services_recipient_by_name():
