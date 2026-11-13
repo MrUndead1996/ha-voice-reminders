@@ -290,7 +290,7 @@ def test_setup_and_unload():
         def listen(name, handler):
             listeners[name] = handler
             return lambda: listeners.pop(name)
-        hass.events = types.SimpleNamespace(async_listen=listen)
+        hass.bus = types.SimpleNamespace(async_listen=listen)
         entry = types.SimpleNamespace(entry_id='entry')
         assert await module.async_setup_entry(hass, entry)
         assert 'mobile_app_notification_action' in listeners

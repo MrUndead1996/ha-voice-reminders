@@ -138,7 +138,7 @@ def async_register_snooze_actions(hass: Any, manager: Any) -> Callable[[], None]
         except Exception as err:
             _LOGGER.warning("Failed to snooze reminder %s: %s", reminder_id, err)
 
-    return hass.events.async_listen("mobile_app_notification_action", handle_action)
+    return hass.bus.async_listen("mobile_app_notification_action", handle_action)
 
 
 async def async_notify(hass: Any, reminder: Any, service: str,

@@ -226,7 +226,7 @@ def test_snooze_action_handler():
         hass = make_hass()
         listeners = {}
         unsub = lambda: None
-        hass.events = types.SimpleNamespace(async_listen=lambda name, handler: (listeners.update({name: handler}) or unsub))
+        hass.bus = types.SimpleNamespace(async_listen=lambda name, handler: (listeners.update({name: handler}) or unsub))
         calls = []
         async def snooze(reminder_id, **kwargs):
             calls.append((reminder_id, kwargs))
