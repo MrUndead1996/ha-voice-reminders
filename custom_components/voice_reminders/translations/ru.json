@@ -21,13 +21,18 @@
         "data": {
           "interval_minutes": "Интервал (минуты)",
           "satellites": "Идентификаторы спутников (через запятую) или «all»",
-          "preannounce": "Фраза перед объявлением"
+          "preannounce": "Фраза перед объявлением",
+          "notify_targets": "Сервисы уведомлений пользователей"
+        },
+        "data_description": {
+          "notify_targets": "Пары ID пользователя:сервис уведомлений через запятую, например ab12cd34:mobile_app_anna."
         }
       }
     },
     "error": {
       "invalid_interval": "Укажите интервал от 1 до 1440 минут.",
-      "invalid_satellites": "Некорректный список спутников"
+      "invalid_satellites": "Некорректный список спутников",
+      "invalid_notify_targets": "Некорректный список сервисов уведомлений"
     }
   }
 }

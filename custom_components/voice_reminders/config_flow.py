@@ -7,7 +7,8 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResult
 
-from .delivery import CONF_PREANNOUNCE, CONF_SATELLITES, _ENTITY_ID_RE
+from .delivery import (CONF_NOTIFY_TARGETS, CONF_PREANNOUNCE, CONF_SATELLITES,
+                       _ENTITY_ID_RE, resolve_notify_targets)
 
 DOMAIN = "voice_reminders"
 CONF_NAME = "name"
@@ -67,6 +68,10 @@ class VoiceRemindersOptionsFlow(config_entries.OptionsFlow):
                 for part in satellites.split(",") if part.strip()
             ):
                 errors[CONF_SATELLITES] = "invalid_satellites"
+            try:
+                resolve_notify_targets(user_input.get(CONF_NOTIFY_TARGETS, ""))
+            except ValueError:
+                errors[CONF_NOTIFY_TARGETS] = "invalid_notify_targets"
             if not errors:
                 return self.async_create_entry(title="", data=user_input)
         interval = self.config_entry.options.get(
@@ -78,9 +83,13 @@ class VoiceRemindersOptionsFlow(config_entries.OptionsFlow):
         preannounce = self.config_entry.options.get(
             CONF_PREANNOUNCE, self.config_entry.data.get(CONF_PREANNOUNCE, "")
         )
+        notify_targets = self.config_entry.options.get(
+            CONF_NOTIFY_TARGETS, self.config_entry.data.get(CONF_NOTIFY_TARGETS, "")
+        )
         schema = vol.Schema({
             vol.Required(CONF_INTERVAL, default=interval): int,
             vol.Optional(CONF_SATELLITES, default=satellites): str,
             vol.Optional(CONF_PREANNOUNCE, default=preannounce): str,
+            vol.Optional(CONF_NOTIFY_TARGETS, default=notify_targets): str,
         })
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors)

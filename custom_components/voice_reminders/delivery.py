@@ -6,10 +6,14 @@ from typing import Any, Awaitable, Callable
 
 CONF_SATELLITES = "satellites"
 CONF_PREANNOUNCE = "preannounce"
+CONF_NOTIFY_TARGETS = "notify_targets"
+_USER_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_NOTIFY_SERVICE_RE = re.compile(r"^[a-z0-9_]+$")
 _ENTITY_ID_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
 _LOGGER = logging.getLogger(__name__)
 
 __all__ = ["CONF_SATELLITES", "CONF_PREANNOUNCE", "resolve_satellites",
+           "CONF_NOTIFY_TARGETS", "resolve_notify_targets", "async_notify",
            "async_announce", "async_delivery_hook"]
 
 
@@ -41,6 +45,55 @@ def resolve_satellites(hass: Any, setting: str | None) -> list[str]:
         if part not in result:
             result.append(part)
     return result
+
+
+def resolve_notify_targets(setting: str | None) -> dict[str, str]:
+    """Resolve user IDs to notify service names.
+
+    Args:
+        setting: Comma-separated user ID and service pairs.
+
+    Returns:
+        Mapping from user IDs to notify service names without the domain.
+
+    Raises:
+        ValueError: If a pair is invalid.
+    """
+    result = {}
+    for part in (setting or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        user_id, separator, service = part.partition(":")
+        user_id, service = user_id.strip(), service.strip()
+        if service.startswith("notify."):
+            service = service[len("notify."):]
+        if not separator or not _USER_ID_RE.fullmatch(user_id) or not _NOTIFY_SERVICE_RE.fullmatch(service):
+            raise ValueError(f"invalid notify target: {part}")
+        result[user_id] = service
+    return result
+
+
+async def async_notify(hass: Any, reminder: Any, service: str) -> bool:
+    """Send a reminder through a notify service.
+
+    Args:
+        hass: Home Assistant instance.
+        reminder: Reminder to send.
+        service: Notify service name without the domain.
+
+    Returns:
+        True if the service was called successfully.
+    """
+    from homeassistant.exceptions import ServiceNotFound
+
+    try:
+        await hass.services.async_call("notify", service,
+                                       {"message": reminder.text, "title": "Reminder"}, context=None)
+    except ServiceNotFound:
+        _LOGGER.warning("Notify service %s is unavailable", service)
+        return False
+    return True
 
 
 async def async_announce(hass: Any, reminder: Any, satellites: list[str],
@@ -87,13 +140,25 @@ def async_delivery_hook(hass: Any, settings: dict) -> Callable[[Any], Awaitable[
             satellites = resolve_satellites(hass, settings[CONF_SATELLITES])
         except ValueError as err:
             _LOGGER.warning("Invalid satellite settings: %s", err)
-            return
         except Exception:
             _LOGGER.exception("Failed to resolve reminder satellites")
-            return
+        else:
+            try:
+                await async_announce(hass, reminder, satellites, settings.get(CONF_PREANNOUNCE, ""))
+            except Exception:
+                _LOGGER.exception("Failed to announce reminder")
         try:
-            await async_announce(hass, reminder, satellites, settings.get(CONF_PREANNOUNCE, ""))
+            targets = resolve_notify_targets(settings.get(CONF_NOTIFY_TARGETS, ""))
+        except ValueError as err:
+            _LOGGER.warning("Invalid notify target settings: %s", err)
         except Exception:
-            _LOGGER.exception("Failed to announce reminder")
+            _LOGGER.exception("Failed to resolve notify targets")
+        else:
+            try:
+                service = targets.get(reminder.owner_user_id)
+                if service:
+                    await async_notify(hass, reminder, service)
+            except Exception:
+                _LOGGER.exception("Failed to notify reminder owner")
 
     return deliver

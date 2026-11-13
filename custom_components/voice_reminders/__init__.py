@@ -6,7 +6,7 @@ from homeassistant.helpers.typing import ConfigType
 
 from . import intents
 from .api import DOMAIN, ReminderManager
-from .delivery import async_delivery_hook, CONF_PREANNOUNCE, CONF_SATELLITES
+from .delivery import async_delivery_hook, CONF_NOTIFY_TARGETS, CONF_PREANNOUNCE, CONF_SATELLITES
 from .services import async_register_services, async_unregister_services
 from .scheduler import ReminderScheduler
 from .storage import ReminderStore
@@ -27,6 +27,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     settings = {
         "satellites": options.get(CONF_SATELLITES, data.get(CONF_SATELLITES, "all")),
         "preannounce": options.get(CONF_PREANNOUNCE, data.get(CONF_PREANNOUNCE, "")),
+        "notify_targets": options.get(CONF_NOTIFY_TARGETS, data.get(CONF_NOTIFY_TARGETS, "")),
     }
     scheduler = ReminderScheduler(hass, store, async_delivery_hook(hass, settings))
     manager = ReminderManager(store, scheduler)

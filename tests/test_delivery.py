@@ -104,3 +104,69 @@ def test_delivery_hook_and_scheduler():
             "text": "Due", "announce": True, "preannounce": "Attention"}
         assert reminder.status == "fired"
     asyncio.run(run())
+
+
+def test_resolve_notify_targets():
+    for setting in (None, "", "  , "):
+        assert delivery.resolve_notify_targets(setting) == {}
+    assert delivery.resolve_notify_targets(
+        " user-1 : notify.mobile_app_anna, other_2:phone, user-1 : replacement ,,"
+    ) == {"user-1": "replacement", "other_2": "phone"}
+    for value in ("missing", ":phone", "user:", "bad user:phone", "user:Bad", "user:notify.", "user:a:b"):
+        try:
+            delivery.resolve_notify_targets(value)
+        except ValueError as err:
+            assert str(err) == f"invalid notify target: {value}"
+        else:
+            assert False, "expected ValueError"
+
+
+def test_notify_payload_and_missing_service():
+    async def run():
+        hass = make_hass()
+        reminder = types.SimpleNamespace(text="Take medicine")
+        assert await delivery.async_notify(hass, reminder, "mobile_app_anna")
+        assert hass.services.calls[-1] == ("notify", "mobile_app_anna",
+            {"message": "Take medicine", "title": "Reminder"}, None)
+        hass.services.error = exceptions.ServiceNotFound("missing")
+        with __import__("unittest").TestCase().assertLogs(delivery.__name__, level=logging.WARNING):
+            assert not await delivery.async_notify(hass, reminder, "mobile_app_anna")
+    asyncio.run(run())
+
+
+def test_delivery_hook_personal_notifications():
+    async def run():
+        hass = make_hass()
+        settings = {"satellites": "assist_satellite.a", "notify_targets": "owner:notify.phone"}
+        hook = delivery.async_delivery_hook(hass, settings)
+        reminder = types.SimpleNamespace(text="Due", owner_user_id="owner")
+        await hook(reminder)
+        assert [call[:2] for call in hass.services.calls] == [("tts", "speak"), ("notify", "phone")]
+        hass.services.calls.clear()
+        reminder.owner_user_id = "other"
+        await hook(reminder)
+        assert [call[:2] for call in hass.services.calls] == [("tts", "speak")]
+        hass.services.calls.clear()
+        settings["notify_targets"] = "invalid"
+        with __import__("unittest").TestCase().assertLogs(delivery.__name__, level=logging.WARNING):
+            await hook(reminder)
+        assert [call[:2] for call in hass.services.calls] == [("tts", "speak")]
+        hass.services.calls.clear()
+        settings["notify_targets"] = "owner:phone"
+        reminder.owner_user_id = "owner"
+        original_call = hass.services.async_call
+        async def missing_notify(domain, service, payload, context=None):
+            if domain == "notify":
+                raise exceptions.ServiceNotFound("missing")
+            await original_call(domain, service, payload, context=context)
+        hass.services.async_call = missing_notify
+        with __import__("unittest").TestCase().assertLogs(delivery.__name__, level=logging.WARNING):
+            await hook(reminder)
+        assert [call[:2] for call in hass.services.calls] == [("tts", "speak")]
+        hass.services.calls.clear()
+        settings["satellites"] = "invalid satellite"
+        hass.services.async_call = original_call
+        with __import__("unittest").TestCase().assertLogs(delivery.__name__, level=logging.WARNING):
+            await hook(reminder)
+        assert [call[:2] for call in hass.services.calls] == [("notify", "phone")]
+    asyncio.run(run())
