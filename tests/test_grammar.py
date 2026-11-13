@@ -35,3 +35,24 @@ def test_parse_recipient():
     assert 'Саша' in grammar.parse_recipient('Сашу')
     assert 'Василий' in grammar.parse_recipient('Василия')
     assert grammar.parse_recipient('alice') == ['alice']
+
+def test_english_numbers_and_delays():
+    for text, expected in [('five', 5), ('twenty five', 25), ('twenty-five', 25), ('hundred', 100), ('garbage', None)]:
+        assert grammar.parse_number(text) == expected
+    for text, expected in [('in 5 minutes', 300), ('in two hours', 7200), ('in 30 seconds', 30), ('half an hour', 1800), ('half hour', 1800), ('an hour and a half', 5400), ('one and a half hours', 5400), ('an hour', 3600), ('bogus', None)]:
+        assert grammar.parse_delay(text) == expected
+
+
+def test_english_datetime():
+    for text, day, hour in [('tomorrow at 3 pm', 14, 15), ('tomorrow at 15:00', 14, 15), ('today in the evening', 13, 18), ('on Friday morning', 20, 9), ('in the evening', 13, 18), ('at 6 in the evening', 13, 18), ('next week on Monday', 16, 13), ('next Friday', 20, 13), ('the day after tomorrow at noon', 15, 12), ('at 3 o\'clock', 13, 3)]:
+        result = grammar.parse_datetime(text, NOW, TZ)
+        assert result == datetime(2026, 11, day, hour, tzinfo=TZ).astimezone(timezone.utc), text
+        assert result.tzinfo == timezone.utc
+    assert grammar.parse_datetime('in 3 days', NOW, TZ) == NOW + timedelta(days=3)
+    for text in ('sometime', '', '2026-11-14T15:00:00', 'tomorrow at 25:00', 'at 3:60'):
+        assert grammar.parse_datetime(text, NOW, TZ) is None
+
+
+def test_english_recurrence():
+    for text, expected in [('every day', 'daily'), ('each day', 'daily'), ('once a week', 'weekly'), ('each week', 'weekly'), ('every month', 'monthly'), ('once a month', 'monthly'), ('monthly', 'monthly'), ('unknown', None)]:
+        assert grammar.parse_recurrence(text) == expected

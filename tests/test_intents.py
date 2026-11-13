@@ -201,3 +201,27 @@ def test_russian_slots():
         await call('SnoozeReminder', 'bob', id=item.id, delay='через двадцать минут')
         assert (await manager.async_list())[0].date == original + timedelta(seconds=1200)
     asyncio.run(run())
+
+
+def test_english_slots():
+    async def run():
+        _, manager, call = await setup()
+        now = datetime(2026, 11, 13, 10, tzinfo=timezone.utc)
+        class FixedDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now.astimezone(tz) if tz else now.replace(tzinfo=None)
+        captured = []
+        async def create(text, owner, user, date, recurrence):
+            item = types.SimpleNamespace(text=text, owner_user_id=owner, date=date, recurrence=recurrence)
+            captured.append(item)
+            return item
+        with patch.object(intents, 'datetime', FixedDatetime), patch.object(manager, 'async_create', create):
+            await call('CreateReminder', 'bob', text='water plants', date='tomorrow at 15:00', recurrence='every week', owner='alice')
+            assert (captured[-1].owner_user_id, captured[-1].recurrence, captured[-1].date) == ('alice', 'weekly', datetime(2026, 11, 14, 12, tzinfo=timezone.utc))
+            await raises(call('CreateReminder', 'bob', text='x', date='sometime'), 'invalid date')
+        item = await manager.async_create('task', 'bob', 'bob', future())
+        original = item.date
+        await call('SnoozeReminder', 'bob', id=item.id, delay='in twenty minutes')
+        assert (await manager.async_list())[0].date == original + timedelta(minutes=20)
+    asyncio.run(run())
